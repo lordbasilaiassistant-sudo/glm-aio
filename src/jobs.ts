@@ -47,7 +47,7 @@ const RECENT_KEY = "jobs:recent";
 export class JobStore {
   constructor(
     private kv: KVLike,
-    private opts: { ttlSeconds?: number; maxAttempts?: number; recentLimit?: number } = {},
+    private opts: { ttlSeconds?: number; maxAttempts?: number; recentLimit?: number; maxPending?: number; maxGoalChars?: number } = {},
   ) {}
 
   private jobKey(id: string): string {
@@ -55,9 +55,17 @@ export class JobStore {
   }
 
   async enqueue(goal: string, source = "api", meta?: Record<string, unknown>): Promise<Job> {
+    // Runaway guard: bound the queue so a delegation loop can't flood KV / the cron.
+    const pending = await this.readList(PENDING_KEY);
+    const maxPending = this.opts.maxPending ?? 200;
+    if (pending.length >= maxPending) {
+      throw new Error(`job queue full (${pending.length}/${maxPending}) — refusing to enqueue`);
+    }
+    const trimmedGoal = String(goal ?? "").slice(0, this.opts.maxGoalChars ?? 8000);
+    if (!trimmedGoal.trim()) throw new Error("empty goal");
     const job: Job = {
       id: genId("job_"),
-      goal,
+      goal: trimmedGoal,
       status: "pending",
       createdAt: nowIso(),
       updatedAt: nowIso(),
@@ -66,7 +74,6 @@ export class JobStore {
       ...(meta ? { meta } : {}),
     };
     await this.put(job);
-    const pending = await this.readList(PENDING_KEY);
     pending.push(job.id);
     await this.writeList(PENDING_KEY, pending);
     await this.trackRecent(job.id);

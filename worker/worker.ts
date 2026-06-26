@@ -159,7 +159,8 @@ async function runDailyReport(env: Env): Promise<void> {
 
 async function handleChat(req: Request, env: Env, url: URL): Promise<Response> {
   const body = (await req.json()) as { messages: Message[]; model?: string; thinking?: boolean; maxTokens?: number };
-  if (!Array.isArray(body.messages)) return json({ error: "messages[] required" }, 400);
+  const verr = validateChat(body);
+  if (verr) return badInput(verr);
   const client = new GLMClient({ apiKey: env.ZAI_API_KEY, model: body.model, logLevel: "silent" });
   const opts = { thinking: body.thinking, maxTokens: body.maxTokens };
 
@@ -174,7 +175,9 @@ async function handleChat(req: Request, env: Env, url: URL): Promise<Response> {
 
 async function handleAsk(req: Request, env: Env): Promise<Response> {
   const body = (await req.json()) as { input: string; system?: string; thinking?: boolean; useTools?: boolean; sessionId?: string };
-  if (!body.input) return json({ error: "input required" }, 400);
+  if (typeof body.input !== "string" || !body.input.trim()) return badInput("input required");
+  if (body.input.length > LIMITS.input) return badInput(`input too long (max ${LIMITS.input})`);
+  if (body.sessionId && (typeof body.sessionId !== "string" || body.sessionId.length > 128)) return badInput("invalid sessionId");
   const assistant = new Assistant({
     apiKey: env.ZAI_API_KEY,
     logLevel: "silent",
@@ -189,9 +192,15 @@ async function handleAsk(req: Request, env: Env): Promise<Response> {
 async function handleEnqueue(req: Request, env: Env): Promise<Response> {
   if (!env.GLM_KV) return json({ error: "job queue needs GLM_KV binding" }, 501);
   const body = (await req.json()) as { goal: string; meta?: Record<string, unknown>; now?: boolean };
-  if (!body.goal) return json({ error: "goal required" }, 400);
+  if (typeof body.goal !== "string" || !body.goal.trim()) return badInput("goal required");
+  if (body.goal.length > LIMITS.goal) return badInput(`goal too long (max ${LIMITS.goal})`);
   const store = jobStore(env);
-  const job = await store.enqueue(body.goal, "api", body.meta);
+  let job: Job;
+  try {
+    job = await store.enqueue(body.goal, "api", body.meta);
+  } catch (e) {
+    return json({ error: e instanceof Error ? e.message : "enqueue failed" }, 429);
+  }
   // Optional synchronous run for callers that want the answer immediately.
   if (body.now) {
     const [done] = await store.process((j) => runJob(j, env), 1);
@@ -426,8 +435,12 @@ function dispatchTaskTool(store: JobStore): ToolDef {
       const meta: Record<string, unknown> = {};
       if (a.role) meta.role = a.role;
       if (a.qa) meta.qa = true;
-      const job = await store.enqueue(a.goal, "delegation", meta);
-      return { queued: job.id, role: a.role ?? "any" };
+      try {
+        const job = await store.enqueue(a.goal, "delegation", meta);
+        return { queued: job.id, role: a.role ?? "any" };
+      } catch (e) {
+        return { error: e instanceof Error ? e.message : "could not queue task" };
+      }
     },
   });
 }
@@ -435,7 +448,8 @@ function dispatchTaskTool(store: JobStore): ToolDef {
 async function handleBusPost(req: Request, env: Env): Promise<Response> {
   if (!env.GLM_KV) return json({ error: "bus needs GLM_KV" }, 501);
   const b = (await req.json()) as { from?: string; to?: string; kind?: string; body: string; ref?: string };
-  if (!b.body) return json({ error: "body required" }, 400);
+  if (typeof b.body !== "string" || !b.body.trim()) return badInput("body required");
+  if (b.body.length > LIMITS.busBody) return badInput(`body too long (max ${LIMITS.busBody})`);
   const msg = await bus(env).post({ from: b.from ?? "human", to: b.to ?? "all", kind: b.kind ?? "note", body: b.body, ...(b.ref ? { ref: b.ref } : {}) });
   return json({ message: msg });
 }
@@ -461,7 +475,26 @@ function bus(env: Env): MessageBus {
 }
 
 function jobStore(env: Env): JobStore {
-  return new JobStore(env.GLM_KV as unknown as KVLike, { maxAttempts: 2, recentLimit: 200, ttlSeconds: 60 * 60 * 24 * 30 });
+  return new JobStore(env.GLM_KV as unknown as KVLike, { maxAttempts: 2, recentLimit: 200, ttlSeconds: 60 * 60 * 24 * 30, maxPending: 200, maxGoalChars: 8000 });
+}
+
+// ---- input hardening ----
+const LIMITS = { input: 8000, goal: 8000, busBody: 4000, messages: 60, messageChars: 24000, totalChat: 200_000 };
+function badInput(msg: string): Response {
+  return json({ error: msg }, 400);
+}
+/** Reject obviously-abusive payloads before they hit the model / KV. */
+function validateChat(body: { messages?: unknown }): string | null {
+  if (!Array.isArray(body.messages)) return "messages[] required";
+  if (body.messages.length === 0 || body.messages.length > LIMITS.messages) return `messages must be 1..${LIMITS.messages}`;
+  let total = 0;
+  for (const m of body.messages as Array<{ content?: unknown }>) {
+    const c = typeof m?.content === "string" ? m.content : "";
+    if (c.length > LIMITS.messageChars) return `a message exceeds ${LIMITS.messageChars} chars`;
+    total += c.length;
+  }
+  if (total > LIMITS.totalChat) return `total messages exceed ${LIMITS.totalChat} chars`;
+  return null;
 }
 
 // ---- helpers ----

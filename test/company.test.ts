@@ -91,6 +91,19 @@ test("workspace: shared docs + board round-trip", async () => {
   assert.equal(board[0]!.by, "qa");
 });
 
+test("hardening: JobStore runaway guard caps the pending queue", async () => {
+  const store = new JobStore(new FakeKV(), { maxPending: 3 });
+  for (let i = 0; i < 3; i++) await store.enqueue("task " + i);
+  await assert.rejects(() => store.enqueue("overflow"), /queue full/);
+});
+
+test("hardening: JobStore rejects empty goal + truncates oversized", async () => {
+  const store = new JobStore(new FakeKV(), { maxGoalChars: 50 });
+  await assert.rejects(() => store.enqueue("   "), /empty goal/);
+  const j = await store.enqueue("x".repeat(500));
+  assert.equal(j.goal.length, 50);
+});
+
 test("JobStore carries role + qa from the runner onto the job", async () => {
   const store = new JobStore(new FakeKV());
   const job = await store.enqueue("build a thing", "api", { role: "builder", qa: true });
