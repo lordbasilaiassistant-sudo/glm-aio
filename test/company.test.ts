@@ -2,8 +2,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { MessageBus } from "../src/bus";
-import { charterFor, systemFor, COMPANY } from "../src/agents";
+import { charterFor, systemFor, COMPANY, byLayer } from "../src/agents";
 import { JobStore } from "../src/jobs";
+import { Workspace } from "../src/workspace";
+import { inferStage, strategyFor, defaultState } from "../src/strategy";
 import type { KVLike } from "../src/memory";
 
 class FakeKV implements KVLike {
@@ -41,10 +43,42 @@ test("agents: QA charter exists and systemFor builds a prompt", () => {
   assert.equal(systemFor("nope"), undefined);
 });
 
-test("agents: coordinator can self-delegate via dispatch_task", () => {
-  const coord = charterFor("coordinator")!;
-  assert.ok(coord.tools.includes("dispatch_task"), "coordinator must hold the delegation tool");
-  assert.match(systemFor("coordinator")!, /dispatch_task/);
+test("agents: layered org — director leads, managers manage, workers report up", () => {
+  const layers = byLayer();
+  assert.ok(layers.exec.some((c) => c.role === "director"));
+  assert.ok(layers.manager.length >= 2);
+  assert.ok(layers.worker.some((c) => c.role === "builder"));
+  assert.ok(layers.quality.some((c) => c.role === "qa"));
+
+  const director = charterFor("director")!;
+  assert.ok(director.tools.includes("dispatch_task") && director.tools.includes("company_strategy"));
+  assert.deepEqual(director.manages, ["eng_manager", "growth_manager"]);
+
+  assert.equal(charterFor("builder")!.reportsTo, "eng_manager");
+  assert.equal(charterFor("researcher")!.reportsTo, "growth_manager");
+  assert.match(systemFor("director")!, /Director/);
+  assert.match(systemFor("eng_manager")!, /report to the director/);
+});
+
+test("strategy: stage is derived from real state, plans differ", () => {
+  assert.equal(inferStage(defaultState()), "bootstrap");
+  assert.equal(inferStage({ revenueUsd: 0, costsUsd: 0, validatedMechanics: ["etsy sheets"] }), "validating");
+  assert.equal(inferStage({ revenueUsd: 50, costsUsd: 0, validatedMechanics: [] }), "first_revenue");
+  assert.equal(inferStage({ revenueUsd: 900, costsUsd: 0, validatedMechanics: [] }), "growth");
+  assert.match(strategyFor("bootstrap").focus, /Spend nothing/i);
+  assert.notEqual(strategyFor("bootstrap").focus, strategyFor("growth").focus);
+});
+
+test("workspace: shared docs + board round-trip", async () => {
+  const ws = new Workspace(new FakeKV());
+  await ws.writeDoc("plan", "ship the etsy test");
+  assert.equal(await ws.readDoc("plan"), "ship the etsy test");
+  await ws.postNote("director", "kicked off plan");
+  await ws.postNote("qa", "verified");
+  const board = await ws.board(10);
+  assert.equal(board.length, 2);
+  assert.equal(board[0]!.text, "verified"); // newest first
+  assert.equal(board[0]!.by, "qa");
 });
 
 test("JobStore carries role + qa from the runner onto the job", async () => {

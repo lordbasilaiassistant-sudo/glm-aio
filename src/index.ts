@@ -17,7 +17,16 @@ export {
   type JobRunner,
 } from "./jobs";
 export { MessageBus, type BusMessage, type MessageBusOptions } from "./bus";
-export { COMPANY, charterFor, systemFor, type AgentCharter } from "./agents";
+export { COMPANY, charterFor, systemFor, byLayer, type AgentCharter, type Layer } from "./agents";
+export { Workspace, type BoardNote, type WorkspaceOptions } from "./workspace";
+export {
+  type Stage,
+  type CompanyState,
+  type StagePlan,
+  defaultState,
+  inferStage,
+  strategyFor,
+} from "./strategy";
 export { genId, nowIso, cleanText } from "./util";
 export { Tracer, redact, type DebugHooks, type TracerConfig, type Counters } from "./debug";
 export {

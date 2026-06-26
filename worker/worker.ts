@@ -12,7 +12,9 @@ import { Assistant } from "../src/assistant";
 import { KVMemoryStore } from "../src/memory";
 import { JobStore, type Job } from "../src/jobs";
 import { MessageBus } from "../src/bus";
-import { COMPANY, systemFor, charterFor } from "../src/agents";
+import { COMPANY, systemFor, charterFor, byLayer } from "../src/agents";
+import { Workspace } from "../src/workspace";
+import { defaultState, inferStage, strategyFor, type CompanyState } from "../src/strategy";
 import { nowIso } from "../src/util";
 import type { Message } from "../src/types";
 import type { KVLike } from "../src/memory";
@@ -79,7 +81,20 @@ export default {
       });
     }
     if (req.method === "GET" && url.pathname === "/company") {
-      return json({ roster: COMPANY.map((c) => ({ role: c.role, title: c.title, job: c.charter })) });
+      return json({
+        roster: COMPANY.map((c) => ({ role: c.role, title: c.title, layer: c.layer, job: c.charter })),
+        layers: Object.fromEntries(
+          Object.entries(byLayer()).map(([layer, roles]) => [
+            layer,
+            roles.map((c) => ({ role: c.role, title: c.title, reportsTo: c.reportsTo, manages: c.manages })),
+          ]),
+        ),
+      });
+    }
+    if (req.method === "GET" && url.pathname === "/strategy") {
+      const s = await companyState(env);
+      const stage = inferStage(s);
+      return json({ stage, plan: strategyFor(stage), state: s });
     }
 
     // --- auth gate (protects your free quota) ---
@@ -97,6 +112,7 @@ export default {
       if (req.method === "GET" && url.pathname === "/status") return await handleStatus(env);
       if (req.method === "POST" && url.pathname === "/bus") return await handleBusPost(req, env);
       if (req.method === "GET" && url.pathname === "/bus") return await handleBusRead(env, url);
+      if (req.method === "GET" && url.pathname === "/workspace") return await handleWorkspace(env, url);
       return json({ error: "not found" }, 404);
     } catch (err: unknown) {
       const e = err as { message?: string; kind?: string };
@@ -204,7 +220,7 @@ async function runJob(job: Job, env: Env) {
     logLevel: "silent",
     name: charter?.title ?? "Builder",
     ...(charter ? { system: systemFor(role!) } : {}),
-    tools: toolsForCharter(charter?.tools, env),
+    tools: resolveTools(charter?.tools, env),
     ...(env.GLM_KV ? { store: new KVMemoryStore(env.GLM_KV, { prefix: "jobmem:", ttlSeconds: 60 * 60 * 24 * 30, maxMessages: 60 }), sessionId: job.id } : {}),
   });
   const r = await builder.ask(job.goal, { thinking: Boolean(job.meta?.thinking) });
@@ -238,37 +254,91 @@ async function runJob(job: Job, env: Env) {
 }
 
 /**
- * Resolve a charter's tool-name list to actual tool defs. ["*"] or undefined = all
- * built-ins (NOT dispatch_task — that's coordinator-only and must be named explicitly,
- * so builders/qa can't spawn runaway sub-jobs).
+ * Resolve a charter's tool-name list to real tool defs. Built-ins (current_time,
+ * calculate, http_get, affiliate_footer) plus the coordination tools (dispatch_task,
+ * read_doc, write_doc, post_note, company_strategy). "*" = all built-ins; coordination
+ * tools must be named explicitly, so a worker can't spawn jobs or rewrite shared docs
+ * unless its role grants it.
  */
-function toolsForCharter(names: string[] | undefined, env: Env): ToolDef[] {
+function resolveTools(names: string[] | undefined, env: Env): ToolDef[] {
   const base = builtinTools();
-  if (!names || names.includes("*")) return base;
-  const dispatch = env.GLM_KV ? dispatchTaskTool(jobStore(env)) : null;
+  if (!names) return base;
+  const specials = specialToolset(env);
   const out: ToolDef[] = [];
-  for (const n of names) {
-    if (n === "dispatch_task") {
-      if (dispatch) out.push(dispatch);
-    } else {
-      const t = base.find((b) => b.name === n);
-      if (t) out.push(t);
-    }
+  const add = (t: ToolDef | undefined) => { if (t && !out.includes(t)) out.push(t); };
+  if (names.includes("*")) {
+    base.forEach(add);
+    for (const n of names) if (n !== "*") add(specials[n]);
+    return out;
   }
+  for (const n of names) add(base.find((t) => t.name === n) ?? specials[n]);
   return out;
 }
 
-/** Tool that lets the coordinator queue sub-tasks for the company — the autonomous-delegation primitive. */
+/** The coordination toolset (KV-backed): delegation, shared workspace, strategy. */
+function specialToolset(env: Env): Record<string, ToolDef> {
+  if (!env.GLM_KV) return {};
+  const store = jobStore(env);
+  const ws = new Workspace(env.GLM_KV as unknown as KVLike, {});
+  return {
+    dispatch_task: dispatchTaskTool(store),
+    company_strategy: strategyTool(env),
+    read_doc: tool({
+      name: "read_doc",
+      description: "Read a shared workspace document by key (e.g. 'plan', 'deliverable:x', 'research:y').",
+      parameters: { type: "object", properties: { key: { type: "string" } }, required: ["key"] },
+      handler: async (a: { key: string }) => ({ key: a.key, content: await ws.readDoc(a.key) }),
+    }),
+    write_doc: tool({
+      name: "write_doc",
+      description: "Write/overwrite a shared workspace document so the whole company can see it.",
+      parameters: { type: "object", properties: { key: { type: "string" }, content: { type: "string" } }, required: ["key", "content"] },
+      handler: async (a: { key: string; content: string }) => { await ws.writeDoc(a.key, a.content); return { ok: true, key: a.key }; },
+    }),
+    post_note: tool({
+      name: "post_note",
+      description: "Post a short note to the shared company board (decisions, handoffs, status).",
+      parameters: { type: "object", properties: { text: { type: "string" }, by: { type: "string" } }, required: ["text"] },
+      handler: async (a: { text: string; by?: string }) => ({ posted: (await ws.postNote(a.by ?? "agent", a.text)).id }),
+    }),
+  };
+}
+
+function strategyTool(env: Env): ToolDef {
+  return tool({
+    name: "company_strategy",
+    description: "Get the company's current financial stage and the priorities + guardrails for that stage. Read this before planning.",
+    parameters: { type: "object", properties: {} },
+    handler: async () => {
+      const s = await companyState(env);
+      const stage = inferStage(s);
+      return { stage, plan: strategyFor(stage), state: s };
+    },
+  });
+}
+
+async function companyState(env: Env): Promise<CompanyState> {
+  if (!env.GLM_KV) return defaultState();
+  const raw = await env.GLM_KV.get("company:state");
+  if (!raw) return defaultState();
+  try {
+    return JSON.parse(raw) as CompanyState;
+  } catch {
+    return defaultState();
+  }
+}
+
+/** The autonomous-delegation primitive — lets exec/managers queue sub-tasks for their reports. */
 function dispatchTaskTool(store: JobStore): ToolDef {
   return tool({
     name: "dispatch_task",
     description:
-      "Queue a sub-task for the agent company to work autonomously on the next cycle. Use this to delegate a scoped task to a specialist role. Returns the new job id.",
+      "Queue a sub-task for the company to work autonomously on the next cycle. Delegate a scoped task to a role. Returns the new job id.",
     parameters: {
       type: "object",
       properties: {
         goal: { type: "string", description: "the scoped task to delegate" },
-        role: { type: "string", enum: ["builder", "qa", "scribe"], description: "which specialist works it" },
+        role: { type: "string", enum: ["eng_manager", "growth_manager", "builder", "data", "researcher", "writer", "qa", "scribe"], description: "which role works it" },
         qa: { type: "boolean", description: "run the QA gate on the result before it is marked done" },
       },
       required: ["goal"],
@@ -277,7 +347,7 @@ function dispatchTaskTool(store: JobStore): ToolDef {
       const meta: Record<string, unknown> = {};
       if (a.role) meta.role = a.role;
       if (a.qa) meta.qa = true;
-      const job = await store.enqueue(a.goal, "coordinator", meta);
+      const job = await store.enqueue(a.goal, "delegation", meta);
       return { queued: job.id, role: a.role ?? "any" };
     },
   });
@@ -297,6 +367,14 @@ async function handleBusRead(env: Env, url: URL): Promise<Response> {
   const limit = Number(url.searchParams.get("limit") ?? "30") || 30;
   const messages = role ? await bus(env).inbox(role, limit) : await bus(env).feed(limit);
   return json({ messages });
+}
+
+async function handleWorkspace(env: Env, url: URL): Promise<Response> {
+  if (!env.GLM_KV) return json({ error: "workspace needs GLM_KV" }, 501);
+  const ws = new Workspace(env.GLM_KV as unknown as KVLike, {});
+  const doc = url.searchParams.get("doc");
+  if (doc) return json({ key: doc, content: await ws.readDoc(doc) });
+  return json({ board: await ws.board(25) });
 }
 
 function bus(env: Env): MessageBus {
