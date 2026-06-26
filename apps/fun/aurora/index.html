@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Aurora — flow-field dreaming</title>
+<style>
+  :root{
+    --ink: #e9f0ff;
+    --panel: rgba(12, 16, 30, 0.55);
+    --panel-edge: rgba(150, 180, 255, 0.16);
+    --accent: #8fb6ff;
+    --glow: rgba(120, 170, 255, 0.5);
+  }
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; }
+  body{
+    background:#05060c;
+    color:var(--ink);
+    font-family:"Inter","Segoe UI",system-ui,-apple-system,sans-serif;
+    overflow:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  #stage{ position:fixed; inset:0; display:block; cursor:crosshair; touch-action:none; }
+
+  /* Title */
+  .brand{
+    position:fixed; top:26px; left:30px; z-index:6;
+    pointer-events:none; user-select:none;
+    transition:opacity .6s ease;
+  }
+  .brand h1{
+    font-size:30px; font-weight:200; letter-spacing:.42em;
+    text-transform:uppercase; line-height:1;
+    background:linear-gradient(90deg,#bcd2ff,#9fffe0 55%,#d9a8ff);
+    -webkit-background-clip:text; background-clip:text;
+    -webkit-text-fill-color:transparent; color:transparent;
+    text-shadow:0 0 30px rgba(120,170,255,.25);
+  }
+  .brand p{
+    margin-top:9px; font-size:11px; letter-spacing:.34em;
+    text-transform:uppercase; color:rgba(190,205,240,.45);
+    font-weight:300;
+  }
+
+  /* Control panel */
+  .panel{
+    position:fixed; bottom:26px; left:50%; transform:translateX(-50%);
+    z-index:6; width:min(620px, calc(100vw - 44px));
+    background:var(--panel);
+    border:1px solid var(--panel-edge);
+    border-radius:18px;
+    padding:16px 20px 18px;
+    backdrop-filter:blur(18px) saturate(1.2);
+    -webkit-backdrop-filter:blur(18px) saturate(1.2);
+    box-shadow:0 18px 60px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.05);
+    transition:opacity .5s ease, transform .5s ease;
+  }
+  .panel.hidden{ opacity:0; transform:translateX(-50%) translateY(20px); pointer-events:none; }
+  .row{ display:flex; gap:22px; align-items:center; flex-wrap:wrap; }
+  .group{ display:flex; flex-direction:column; gap:7px; flex:1 1 150px; min-width:130px; }
+  .group > label{
+    font-size:9.5px; letter-spacing:.2em; text-transform:uppercase;
+    color:rgba(190,205,240,.5); font-weight:500;
+  }
+
+  /* Palette swatches */
+  .palettes{ display:flex; gap:9px; }
+  .swatch{
+    width:42px; height:26px; border-radius:8px; cursor:pointer;
+    border:1.5px solid rgba(255,255,255,.12);
+    position:relative; transition:transform .18s ease, border-color .18s ease;
+    outline:none;
+  }
+  .swatch:hover{ transform:translateY(-2px); }
+  .swatch.active{ border-color:rgba(255,255,255,.85); transform:translateY(-2px); }
+  .swatch.active::after{
+    content:""; position:absolute; inset:-5px; border-radius:11px;
+    border:1px solid rgba(255,255,255,.25);
+  }
+
+  /* Sliders */
+  input[type=range]{
+    -webkit-appearance:none; appearance:none; width:100%; height:4px;
+    border-radius:4px; outline:none; cursor:pointer;
+    background:linear-gradient(90deg, var(--accent), rgba(150,180,255,.15));
+  }
+  input[type=range]::-webkit-slider-thumb{
+    -webkit-appearance:none; appearance:none;
+    width:15px; height:15px; border-radius:50%;
+    background:#eaf1ff; cursor:pointer;
+    box-shadow:0 0 0 3px rgba(143,182,255,.3), 0 0 14px var(--glow);
+    transition:transform .15s ease;
+  }
+  input[type=range]::-webkit-slider-thumb:hover{ transform:scale(1.15); }
+  input[type=range]::-moz-range-thumb{
+    width:15px; height:15px; border:none; border-radius:50%;
+    background:#eaf1ff; cursor:pointer;
+    box-shadow:0 0 0 3px rgba(143,182,255,.3), 0 0 14px var(--glow);
+  }
+  .slabel{ display:flex; justify-content:space-between; align-items:baseline; }
+  .slabel .val{ font-size:10px; color:var(--accent); letter-spacing:.12em; font-variant-numeric:tabular-nums; }
+
+  .hint{
+    margin-top:13px; font-size:10.5px; letter-spacing:.08em;
+    color:rgba(190,205,240,.4); text-align:center; font-weight:300;
+  }
+  .hint b{ color:rgba(200,215,250,.7); font-weight:500; }
+
+  .toggle{
+    position:fixed; top:26px; right:30px; z-index:7;
+    width:38px; height:38px; border-radius:11px;
+    background:var(--panel); border:1px solid var(--panel-edge);
+    backdrop-filter:blur(14px); -webkit-backdrop-filter:blur(14px);
+    color:rgba(200,215,250,.7); cursor:pointer;
+    display:flex; align-items:center; justify-content:center;
+    font-size:16px; transition:color .2s, transform .2s, background .2s;
+  }
+  .toggle:hover{ color:#fff; transform:scale(1.06); }
+
+  @media (max-width:560px){
+    .brand h1{ font-size:22px; letter-spacing:.3em; }
+    .row{ gap:14px; }
+  }
+</style>
+</head>
+<body>
+  <canvas id="stage"></canvas>
+
+  <div class="brand" id="brand">
+    <h1>Aurora</h1>
+    <p>stir the field &middot; click to bloom</p>
+  </div>
+
+  <button class="toggle" id="toggle" title="Hide / show controls">&#9776;</button>
+
+  <div class="panel" id="panel">
+    <div class="row">
+      <div class="group" style="flex:0 0 auto;">
+        <label>Palette</label>
+        <div class="palettes" id="palettes"></div>
+      </div>
+      <div class="group">
+        <div class="slabel"><label>Density</label><span class="val" id="densVal">2600</span></div>
+        <input type="range" id="density" min="600" max="6000" step="100" value="2600" />
+      </div>
+      <div class="group">
+        <div class="slabel"><label>Calm &harr; Storm</label><span class="val" id="moodVal">calm</span></div>
+        <input type="range" id="mood" min="0" max="100" step="1" value="30" />
+      </div>
+    </div>
+    <div class="hint"><b>Drag</b> to stir the current &nbsp;&middot;&nbsp; <b>Click</b> to burst a bloom of light</div>
+  </div>
+
+<script>
+(function(){
+  "use strict";
+
+  var canvas = document.getElementById("stage");
+  var ctx = canvas.getContext("2d", { alpha:false });
+  var W=0, H=0, DPR=1;
+
+  var reduceMotion = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  /* ---------- Palettes (gorgeous gradients) ---------- */
+  // Each: name, background, and a set of HSL hue/sat/light anchors for particles.
+  var PALETTES = [
+    {
+      name:"Aurora",
+      bg:[6,9,18],
+      swatch:"linear-gradient(120deg,#1d6e5c,#46e6b0,#7ad7ff,#b07bff)",
+      stops:[ [158,80,55],[180,85,60],[205,90,62],[270,70,66] ]
+    },
+    {
+      name:"Ember",
+      bg:[14,6,12],
+      swatch:"linear-gradient(120deg,#ff5d3b,#ff9e57,#ffd86b,#ff5fae)",
+      stops:[ [12,95,58],[28,95,60],[44,95,62],[330,85,64] ]
+    },
+    {
+      name:"Abyss",
+      bg:[5,7,16],
+      swatch:"linear-gradient(120deg,#3a5bff,#7c8bff,#56e0ff,#c08bff)",
+      stops:[ [225,90,62],[250,80,66],[195,90,62],[280,75,66] ]
+    }
+  ];
+  var paletteIndex = 0;
+
+  /* ---------- Value-noise field (smooth, cheap pseudo-Perlin) ---------- */
+  var PERM = new Uint8Array(512);
+  (function seed(){
+    var p = new Uint8Array(256);
+    for (var i=0;i<256;i++) p[i]=i;
+    var s = 1337;
+    for (var j=255;j>0;j--){
+      s = (s*1103515245 + 12345) & 0x7fffffff;
+      var k = s % (j+1);
+      var t=p[j]; p[j]=p[k]; p[k]=t;
+    }
+    for (var m=0;m<512;m++) PERM[m]=p[m&255];
+  })();
+  function fade(t){ return t*t*t*(t*(t*6-15)+10); }
+  function lerp(a,b,t){ return a+(b-a)*t; }
+  function grad(h,x,y){
+    // gradient direction from hash
+    var g = h & 7;
+    var u = g<4 ? x : y;
+    var v = g<4 ? y : x;
+    return ((g&1)?-u:u) + ((g&2)?-v:v);
+  }
+  function vnoise(x,y){
+    var X = Math.floor(x)&255, Y=Math.floor(y)&255;
+    var xf = x-Math.floor(x), yf=y-Math.floor(y);
+    var u=fade(xf), v=fade(yf);
+    var aa=PERM[PERM[X]+Y], ab=PERM[PERM[X]+Y+1];
+    var ba=PERM[PERM[X+1]+Y], bb=PERM[PERM[X+1]+Y+1];
+    var x1=lerp(grad(aa,xf,yf), grad(ba,xf-1,yf), u);
+    var x2=lerp(grad(ab,xf,yf-1), grad(bb,xf-1,yf-1), u);
+    return lerp(x1,x2,v); // ~[-1,1]
+  }
+
+  /* ---------- Particles ---------- */
+  var particles = [];
+  var TARGET = 2600;
+  function makeParticle(p){
+    p = p || {};
+    p.x = Math.random()*W;
+    p.y = Math.random()*H;
+    p.px = p.x; p.py = p.y;
+    p.life = 40 + Math.random()*160;
+    p.age = Math.random()*p.life;
+    p.tone = Math.random();        // 0..1 selects color anchor blend
+    p.speed = 0.6 + Math.random()*0.8;
+    return p;
+  }
+  function setDensity(n){
+    TARGET = n;
+    if (particles.length < n){
+      while(particles.length < n) particles.push(makeParticle({}));
+    } else {
+      particles.length = n;
+    }
+  }
+
+  /* ---------- Stir field (mouse-painted perturbation) ---------- */
+  // A coarse grid of decaying angle/strength impulses the user paints.
+  var GRID = 26;
+  var stir = []; // {gx,gy} cells store {ang, str}
+  var stirCols=0, stirRows=0;
+  function initStir(){
+    stirCols = Math.ceil(W/GRID)+1;
+    stirRows = Math.ceil(H/GRID)+1;
+    stir = new Array(stirCols*stirRows);
+    for (var i=0;i<stir.length;i++) stir[i]={ang:0,str:0};
+  }
+  function addStir(x,y,vx,vy){
+    var cx = Math.floor(x/GRID), cy=Math.floor(y/GRID);
+    var ang = Math.atan2(vy,vx);
+    var mag = Math.min(1, Math.hypot(vx,vy)/30);
+    var R=2;
+    for (var dy=-R;dy<=R;dy++){
+      for (var dx=-R;dx<=R;dx++){
+        var gx=cx+dx, gy=cy+dy;
+        if (gx<0||gy<0||gx>=stirCols||gy>=stirRows) continue;
+        var d = 1 - Math.hypot(dx,dy)/(R+1);
+        if (d<=0) continue;
+        var cell = stir[gy*stirCols+gx];
+        var s = mag*d;
+        // blend angle weighted by strength
+        var nx = Math.cos(cell.ang)*cell.str + Math.cos(ang)*s;
+        var ny = Math.sin(cell.ang)*cell.str + Math.sin(ang)*s;
+        cell.ang = Math.atan2(ny,nx);
+        cell.str = Math.min(1.4, cell.str + s);
+      }
+    }
+  }
+  function sampleStir(x,y){
+    var gx = Math.floor(x/GRID), gy=Math.floor(y/GRID);
+    if (gx<0||gy<0||gx>=stirCols||gy>=stirRows) return null;
+    return stir[gy*stirCols+gx];
+  }
+
+  /* ---------- Bursts (click blooms) ---------- */
+  var bursts = [];
+  function addBurst(x,y){
+    bursts.push({x:x,y:y,r:0,max:160+Math.random()*120,life:1});
+    // inject a swirl of fresh particles for instant pop
+    var count = 90;
+    for (var i=0;i<count;i++){
+      var a = (i/count)*Math.PI*2 + Math.random()*0.3;
+      var sp = 1 + Math.random()*3;
+      var p = particles[(Math.random()*particles.length)|0];
+      if (!p) continue;
+      p.x = x; p.y = y; p.px=x; p.py=y;
+      p.age = 0; p.life = 30+Math.random()*60;
+      p.vx = Math.cos(a)*sp; p.vy=Math.sin(a)*sp;
+      p.tone = Math.random();
+      p.kick = 14;
+    }
+  }
+
+  /* ---------- Pointer ---------- */
+  var pointer = { x:0, y:0, px:0, py:0, down:false, moved:0 };
+  function pointerPos(e){
+    var t = (e.touches && e.touches[0]) ? e.touches[0] : e;
+    return { x:t.clientX, y:t.clientY };
+  }
+  canvas.addEventListener("pointerdown", function(e){
+    var p = pointerPos(e);
+    pointer.down=true; pointer.moved=0;
+    pointer.x=p.x; pointer.y=p.y; pointer.px=p.x; pointer.py=p.y;
+  });
+  canvas.addEventListener("pointermove", function(e){
+    var p = pointerPos(e);
+    pointer.px=pointer.x; pointer.py=pointer.y;
+    pointer.x=p.x; pointer.y=p.y;
+    if (pointer.down){
+      var vx = pointer.x-pointer.px, vy=pointer.y-pointer.py;
+      pointer.moved += Math.hypot(vx,vy);
+      addStir(pointer.x, pointer.y, vx, vy);
+    }
+  });
+  window.addEventListener("pointerup", function(e){
+    if (pointer.down && pointer.moved < 6){
+      addBurst(pointer.x, pointer.y);
+    }
+    pointer.down=false;
+  });
+
+  /* ---------- Controls ---------- */
+  var moodVal = 0.30; // 0 calm .. 1 storm
+
+  var palettesEl = document.getElementById("palettes");
+  PALETTES.forEach(function(pal, i){
+    var b = document.createElement("button");
+    b.className = "swatch" + (i===0?" active":"");
+    b.style.background = pal.swatch;
+    b.title = pal.name;
+    b.addEventListener("click", function(){
+      paletteIndex = i;
+      [].forEach.call(palettesEl.children, function(c){ c.classList.remove("active"); });
+      b.classList.add("active");
+      paintBackground(true);
+    });
+    palettesEl.appendChild(b);
+  });
+
+  var densEl = document.getElementById("density");
+  var densValEl = document.getElementById("densVal");
+  densEl.addEventListener("input", function(){
+    densValEl.textContent = densEl.value;
+    setDensity(parseInt(densEl.value,10));
+  });
+
+  var moodEl = document.getElementById("mood");
+  var moodValEl = document.getElementById("moodVal");
+  function moodLabel(v){
+    if (v<20) return "calm";
+    if (v<45) return "drifting";
+    if (v<70) return "swelling";
+    if (v<90) return "surging";
+    return "storm";
+  }
+  moodEl.addEventListener("input", function(){
+    moodVal = parseInt(moodEl.value,10)/100;
+    moodValEl.textContent = moodLabel(parseInt(moodEl.value,10));
+  });
+  moodValEl.textContent = moodLabel(30);
+
+  // panel toggle
+  var panel = document.getElementById("panel");
+  var brand = document.getElementById("brand");
+  document.getElementById("toggle").addEventListener("click", function(){
+    panel.classList.toggle("hidden");
+  });
+
+  /* ---------- Resize ---------- */
+  function resize(){
+    DPR = Math.min(window.devicePixelRatio||1, 2);
+    W = window.innerWidth; H = window.innerHeight;
+    canvas.width = Math.floor(W*DPR);
+    canvas.height = Math.floor(H*DPR);
+    canvas.style.width = W+"px";
+    canvas.style.height = H+"px";
+    ctx.setTransform(DPR,0,0,DPR,0,0);
+    initStir();
+    paintBackground(true);
+  }
+  function paintBackground(full){
+    var bg = PALETTES[paletteIndex].bg;
+    ctx.fillStyle = "rgb("+bg[0]+","+bg[1]+","+bg[2]+")";
+    ctx.fillRect(0,0,W,H);
+  }
+  window.addEventListener("resize", resize);
+
+  /* ---------- Color helper ---------- */
+  function toneColor(pal, tone, alpha){
+    var stops = pal.stops;
+    var f = tone*(stops.length-1);
+    var i = Math.floor(f);
+    var t = f-i;
+    var a = stops[i], b = stops[Math.min(i+1,stops.length-1)];
+    var h = lerp(a[0],b[0],t);
+    var s = lerp(a[1],b[1],t);
+    var l = lerp(a[2],b[2],t);
+    return "hsla("+h.toFixed(0)+","+s.toFixed(0)+"%,"+l.toFixed(0)+"%,"+alpha+")";
+  }
+
+  /* ---------- Main loop ---------- */
+  var t = 0;
+  var NOISE_SCALE = 0.0016;
+
+  function frame(){
+    var pal = PALETTES[paletteIndex];
+
+    // Trail fade: translucent backdrop fill -> glowing trails
+    var bg = pal.bg;
+    ctx.globalCompositeOperation = "source-over";
+    ctx.fillStyle = "rgba("+bg[0]+","+bg[1]+","+bg[2]+","+ (0.085 + moodVal*0.05).toFixed(3) +")";
+    ctx.fillRect(0,0,W,H);
+
+    // additive glow for particles
+    ctx.globalCompositeOperation = "lighter";
+
+    var flowSpeed = 0.9 + moodVal*3.2;
+    var curl = 1.0 + moodVal*2.4;          // angle multiplier -> more chaotic when stormy
+    var lineW = 1.05 + (1-moodVal)*0.5;
+    var baseAlpha = 0.30 + (1-moodVal)*0.10;
+    var timeFlow = (reduceMotion ? 0.00018 : 0.0006) * (0.6 + moodVal*1.6);
+    t += 1;
+
+    var n = particles.length;
+    for (var i=0;i<n;i++){
+      var p = particles[i];
+
+      // base flow-field angle from animated value noise
+      var nv = vnoise(p.x*NOISE_SCALE, p.y*NOISE_SCALE + t*timeFlow);
+      var ang = nv * Math.PI * 2 * curl;
+
+      var vx = Math.cos(ang), vy = Math.sin(ang);
+
+      // user-stirred perturbation
+      var cell = sampleStir(p.x, p.y);
+      if (cell && cell.str>0.001){
+        var sx = Math.cos(cell.ang)*cell.str;
+        var sy = Math.sin(cell.ang)*cell.str;
+        vx = vx*(1-Math.min(1,cell.str)) + sx*2.2;
+        vy = vy*(1-Math.min(1,cell.str)) + sy*2.2;
+      }
+
+      // burst kick
+      if (p.kick){
+        vx += (p.vx||0); vy += (p.vy||0);
+        p.vx *= 0.86; p.vy *= 0.86; p.kick--;
+      }
+
+      var sp = flowSpeed * p.speed;
+      p.px = p.x; p.py = p.y;
+      p.x += vx*sp;
+      p.y += vy*sp;
+
+      p.age++;
+
+      // wrap / respawn
+      var off = (p.x< -20 || p.x>W+20 || p.y<-20 || p.y>H+20);
+      if (p.age > p.life || off){
+        makeParticle(p);
+        continue;
+      }
+
+      // alpha fades in and out across life for soft trails
+      var lifeT = p.age/p.life;
+      var fadeA = Math.sin(lifeT*Math.PI);
+      var alpha = (baseAlpha*fadeA).toFixed(3);
+
+      // draw trail segment
+      ctx.strokeStyle = toneColor(pal, p.tone, alpha);
+      ctx.lineWidth = lineW;
+      ctx.beginPath();
+      ctx.moveTo(p.px, p.py);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    }
+
+    // decay stir field
+    for (var k=0;k<stir.length;k++){
+      var c = stir[k];
+      if (c.str>0.0005) c.str *= 0.965;
+      else c.str=0;
+    }
+
+    // bursts: glowing expanding rings
+    if (bursts.length){
+      ctx.globalCompositeOperation = "lighter";
+      for (var b=bursts.length-1;b>=0;b--){
+        var bu = bursts[b];
+        bu.r += (bu.max-bu.r)*0.06;
+        bu.life *= 0.93;
+        if (bu.life<0.03){ bursts.splice(b,1); continue; }
+        var g = ctx.createRadialGradient(bu.x,bu.y, Math.max(1,bu.r*0.2), bu.x,bu.y, bu.r);
+        var col = toneColor(pal, Math.random()<0.5?0.2:0.7, (bu.life*0.5).toFixed(3));
+        g.addColorStop(0, col);
+        g.addColorStop(0.5, toneColor(pal, 0.5, (bu.life*0.18).toFixed(3)));
+        g.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = g;
+        ctx.beginPath();
+        ctx.arc(bu.x,bu.y,bu.r,0,Math.PI*2);
+        ctx.fill();
+      }
+    }
+
+    ctx.globalCompositeOperation = "source-over";
+    requestAnimationFrame(frame);
+  }
+
+  /* ---------- Boot ---------- */
+  resize();
+  setDensity(TARGET);
+
+  // gentle auto-stir on first load so it's alive before the user touches it
+  (function welcome(){
+    var cx=W*0.5, cy=H*0.5;
+    for (var i=0;i<40;i++){
+      var a=(i/40)*Math.PI*2;
+      addStir(cx+Math.cos(a)*120, cy+Math.sin(a)*120, Math.cos(a+1.4)*8, Math.sin(a+1.4)*8);
+    }
+  })();
+
+  requestAnimationFrame(frame);
+
+  // fade brand after a few seconds for clean hero
+  setTimeout(function(){ brand.style.opacity = "0.35"; }, 6000);
+})();
+</script>
+</body>
+</html>

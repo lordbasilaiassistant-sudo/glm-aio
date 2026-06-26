@@ -122,6 +122,7 @@ export default {
       if (req.method === "GET" && url.pathname === "/bus") return await handleBusRead(env, url);
       if (req.method === "GET" && url.pathname === "/workspace") return await handleWorkspace(env, url);
       if (req.method === "POST" && url.pathname === "/review") return await handleReview(req, env);
+      if (req.method === "GET" && url.pathname === "/escalations") return await handleEscalations(env);
       return json({ error: "not found" }, 404);
     } catch (err: unknown) {
       const e = err as { message?: string; kind?: string };
@@ -352,16 +353,18 @@ async function runJob(job: Job, env: Env) {
  */
 function resolveTools(names: string[] | undefined, env: Env, depth = 0): ToolDef[] {
   const base = builtinTools();
-  if (!names) return base;
   const specials = specialToolset(env, depth);
   const out: ToolDef[] = [];
   const add = (t: ToolDef | undefined) => { if (t && !out.includes(t)) out.push(t); };
-  if (names.includes("*")) {
+  if (!names) {
+    base.forEach(add);
+  } else if (names.includes("*")) {
     base.forEach(add);
     for (const n of names) if (n !== "*") add(specials[n]);
-    return out;
+  } else {
+    for (const n of names) add(base.find((t) => t.name === n) ?? specials[n]);
   }
-  for (const n of names) add(base.find((t) => t.name === n) ?? specials[n]);
+  add(specials.escalate); // universal: ANY agent can reach the gatekeeper (Claude) when stuck
   return out;
 }
 
@@ -395,6 +398,27 @@ function specialToolset(env: Env, depth = 0): Record<string, ToolDef> {
       description: "Post a short note to the shared company board (decisions, handoffs, status).",
       parameters: { type: "object", properties: { text: { type: "string" }, by: { type: "string" } }, required: ["text"] },
       handler: async (a: { text: string; by?: string }) => ({ posted: (await ws.postNote(a.by ?? "agent", a.text)).id }),
+    }),
+    escalate: tool({
+      name: "escalate",
+      description:
+        "Escalate something you CANNOT handle up the chain of command. to='claude' (the gatekeeper/fixer — DEFAULT; use for a blocker, a tool/access you lack, a deliverable that needs RELEASE approval, or anything above your ability — Claude handles ~99.9%). to='anthony' (the human — LAST RESORT only, for things that genuinely need him: signing, money out, a personal/legal call). Never bug Anthony with what Claude can handle.",
+      parameters: {
+        type: "object",
+        properties: {
+          to: { type: "string", enum: ["claude", "anthony"], description: "who to escalate to (default claude)" },
+          kind: { type: "string", enum: ["blocked", "release", "decision", "sensitive", "fix"], description: "why you're escalating" },
+          summary: { type: "string", description: "one line: what you need + the relevant doc key if any" },
+        },
+        required: ["summary"],
+      },
+      handler: async (a: { to?: string; kind?: string; summary?: string }) => {
+        const to = a.to === "anthony" ? "anthony" : "claude";
+        const summary = String(a.summary ?? "").slice(0, 600);
+        if (!summary.trim()) return { error: "summary required" };
+        const m = await bus(env).post({ from: "company", to, kind: `escalation:${a.kind ?? "blocked"}`, body: summary });
+        return { escalated: m.id, to, note: to === "anthony" ? "reached the human (last resort)" : "reached Claude the gatekeeper" };
+      },
     }),
     org_index: tool({
       name: "org_index",
@@ -550,6 +574,13 @@ async function handleReview(req: Request, env: Env): Promise<Response> {
 
 function bus(env: Env): MessageBus {
   return new MessageBus(env.GLM_KV as unknown as KVLike, { feedLimit: 150, inboxLimit: 120, ttlSeconds: 60 * 60 * 24 * 14 });
+}
+
+/** The gatekeeper's queue: what the company escalated to Claude (and the last-resort Anthony tier). */
+async function handleEscalations(env: Env): Promise<Response> {
+  if (!env.GLM_KV) return json({ error: "escalations need GLM_KV" }, 501);
+  const [claude, anthony] = await Promise.all([bus(env).inbox("claude", 50), bus(env).inbox("anthony", 50)]);
+  return json({ claude, anthony, counts: { claude: claude.length, anthony: anthony.length } });
 }
 
 function jobStore(env: Env): JobStore {
