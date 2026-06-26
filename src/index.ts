@@ -16,6 +16,8 @@ export {
   type JobOutcome,
   type JobRunner,
 } from "./jobs";
+export { MessageBus, type BusMessage, type MessageBusOptions } from "./bus";
+export { COMPANY, charterFor, systemFor, type AgentCharter } from "./agents";
 export { genId, nowIso, cleanText } from "./util";
 export { Tracer, redact, type DebugHooks, type TracerConfig, type Counters } from "./debug";
 export {

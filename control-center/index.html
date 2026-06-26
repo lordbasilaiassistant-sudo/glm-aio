@@ -176,7 +176,13 @@
     <div class="panel">
       <h2>Dispatch a job</h2>
       <p style="color:var(--muted);font-size:13px;margin:0 0 10px">Hand off a goal. The agent works it off your PC and posts the result below.</p>
-      <textarea id="jobInput" rows="3" placeholder="e.g. Summarize the latest Base gas trends in 3 bullets."></textarea>
+      <textarea id="jobInput" rows="3" placeholder="e.g. Write a Python email validator with tests."></textarea>
+      <div class="row" style="margin-top:10px">
+        <select id="roleSelect" style="background:#081215;border:1px solid var(--hair-2);border-radius:8px;color:var(--ink);font-family:var(--mono);font-size:12px;padding:7px 9px">
+          <option value="">any agent</option>
+        </select>
+        <label class="toggle"><input type="checkbox" id="qaToggle" /> QA before delivery</label>
+      </div>
       <div class="row end">
         <button class="btn ghost" id="queueBtn">Queue for cron</button>
         <button class="btn primary" id="runBtn">Run now</button>
@@ -187,6 +193,14 @@
   <div class="panel full" style="margin-top:14px">
     <h2>Jobs <span style="flex:1"></span><button class="btn ghost" id="refreshJobs" style="padding:5px 11px;font-size:12px">Refresh</button></h2>
     <div class="jobs" id="jobsList"><div class="empty">No jobs yet.</div></div>
+  </div>
+
+  <div class="panel full" style="margin-top:14px">
+    <h2>Company <span style="flex:1"></span><span style="font-family:var(--mono);font-size:11px;color:var(--muted)">agents + live feed</span></h2>
+    <div class="caps">
+      <div class="col"><h3>Roster</h3><ul id="roster"><li><span>loading…</span></li></ul></div>
+      <div class="col"><h3>Activity feed</h3><div class="jobs" id="busFeed"><div class="empty">Quiet for now.</div></div></div>
+    </div>
   </div>
 
   <div class="panel full" style="margin-top:14px">
@@ -318,9 +332,28 @@
   // ---- jobs ----
   async function dispatch(now) {
     const ta = $("jobInput"); const goal = ta.value.trim(); if (!goal) return;
+    const meta = {};
+    const role = $("roleSelect").value; if (role) meta.role = role;
+    if ($("qaToggle").checked) meta.qa = true;
     ta.value = ""; state.activity = Math.max(state.activity, 3);
-    try { await api("/jobs", { method: "POST", body: JSON.stringify({ goal, now: !!now }) }); await refreshJobs(); await refreshStatus(); }
+    try { await api("/jobs", { method: "POST", body: JSON.stringify({ goal, now: !!now, meta }) }); await refreshJobs(); await refreshStatus(); loadCompany(); }
     catch (e) { alert("Couldn't dispatch: " + e.message); }
+  }
+
+  async function loadCompany() {
+    try {
+      const c = await api("/company");
+      const roster = c.roster || [];
+      $("roster").innerHTML = roster.map((r) => `<li><b>${esc(r.title)}</b> <span>· ${esc(r.role)} — ${esc((r.job || "").slice(0, 90))}…</span></li>`).join("") || "<li><span>none</span></li>";
+      const sel = $("roleSelect");
+      if (sel.options.length <= 1) for (const r of roster) { const o = document.createElement("option"); o.value = r.role; o.textContent = r.title; sel.appendChild(o); }
+    } catch (e) {}
+    try {
+      const b = await api("/bus?limit=12");
+      const msgs = b.messages || [];
+      const feed = $("busFeed");
+      feed.innerHTML = msgs.length ? msgs.map((m) => `<div class="job"><div class="top"><span class="chip running">${esc(m.from)}→${esc(m.to)}</span><span class="goal">${esc(m.body)}</span></div></div>`).join("") : '<div class="empty">Quiet for now.</div>';
+    } catch (e) {}
   }
   $("runBtn").onclick = () => dispatch(true);
   $("queueBtn").onclick = () => dispatch(false);
@@ -331,12 +364,18 @@
       const r = await api("/jobs"); const jobs = r.jobs || [];
       const list = $("jobsList");
       if (!jobs.length) { list.innerHTML = '<div class="empty">No jobs yet. Dispatch one above.</div>'; return; }
-      list.innerHTML = jobs.map((j) => `
+      list.innerHTML = jobs.map((j) => {
+        const qaFail = j.qa && j.qa.toUpperCase().trim().startsWith("FAIL");
+        const qaChip = j.qa ? `<span class="chip ${qaFail ? "error" : "done"}">QA ${qaFail ? "FAIL" : "PASS"}</span>` : "";
+        const roleChip = j.role ? `<span class="chip running">${esc(j.role)}</span>` : "";
+        return `
         <div class="job">
-          <div class="top"><span class="chip ${esc(j.status)}">${esc(j.status)}</span><span class="goal">${esc(j.goal || "")}</span><span class="id">${esc((j.id || "").slice(0, 10))}</span></div>
+          <div class="top"><span class="chip ${esc(j.status)}">${esc(j.status)}</span>${roleChip}${qaChip}<span class="goal">${esc(j.goal || "")}</span><span class="id">${esc((j.id || "").slice(0, 10))}</span></div>
           ${j.result ? `<div class="res">${esc(j.result)}</div>` : ""}
+          ${j.qa ? `<div class="res" style="color:${qaFail ? "var(--alert)" : "var(--muted)"}">QA: ${esc(j.qa)}</div>` : ""}
           ${j.error ? `<div class="res" style="color:var(--alert)">${esc(j.error)}</div>` : ""}
-        </div>`).join("");
+        </div>`;
+      }).join("");
     } catch (e) {}
   }
 

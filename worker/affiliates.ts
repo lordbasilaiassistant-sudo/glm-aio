@@ -36,6 +36,15 @@ export const AFFILIATES: Affiliate[] = [
     earns: "cash (PartnerStack)",
     verified: "2026-06-26 · HTTP 200 → PartnerStack tracker",
   },
+  {
+    id: "fiverr",
+    program: "Fiverr (freelance marketplace)",
+    url: "https://www.fiverr.com/pe/jjNBkXw",
+    fits: ["freelance", "fiverr", "gig", "hire", "outsource", "service", "designer", "writer", "writing", "marketing", "logo", "voiceover", "seller", "commission", "business"],
+    disclosedLine: "Need it done by a pro? Fiverr (referral link — supports us): https://www.fiverr.com/pe/jjNBkXw",
+    earns: "cash (Fiverr affiliate)",
+    verified: "2026-06-26",
+  },
 ];
 
 /** Return affiliates whose context fence matches. Empty array = add no link (correct, common). */

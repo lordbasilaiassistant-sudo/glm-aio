@@ -11,9 +11,13 @@ import { GLMClient } from "../src/client";
 import { Assistant } from "../src/assistant";
 import { KVMemoryStore } from "../src/memory";
 import { JobStore, type Job } from "../src/jobs";
+import { MessageBus } from "../src/bus";
+import { COMPANY, systemFor, charterFor } from "../src/agents";
 import { nowIso } from "../src/util";
 import type { Message } from "../src/types";
+import type { KVLike } from "../src/memory";
 import { builtinTools } from "./tools";
+import type { ToolDef } from "../src/tools";
 import { AFFILIATES } from "./affiliates";
 
 export interface Env {
@@ -68,7 +72,11 @@ export default {
         automations: REGISTRY.automations,
         apps: REGISTRY.apps,
         affiliates: AFFILIATES.map((a) => ({ program: a.program, fits: a.fits, earns: a.earns, verified: a.verified })),
+        company: COMPANY.map((c) => ({ role: c.role, title: c.title, job: c.charter })),
       });
+    }
+    if (req.method === "GET" && url.pathname === "/company") {
+      return json({ roster: COMPANY.map((c) => ({ role: c.role, title: c.title, job: c.charter })) });
     }
 
     // --- auth gate (protects your free quota) ---
@@ -84,6 +92,8 @@ export default {
       if (req.method === "GET" && url.pathname === "/jobs") return await handleListJobs(env);
       if (req.method === "GET" && url.pathname.startsWith("/jobs/")) return await handleGetJob(env, url.pathname.slice("/jobs/".length));
       if (req.method === "GET" && url.pathname === "/status") return await handleStatus(env);
+      if (req.method === "POST" && url.pathname === "/bus") return await handleBusPost(req, env);
+      if (req.method === "GET" && url.pathname === "/bus") return await handleBusRead(env, url);
       return json({ error: "not found" }, 404);
     } catch (err: unknown) {
       const e = err as { message?: string; kind?: string };
@@ -177,27 +187,83 @@ async function runCron(event: ScheduledEvent, env: Env): Promise<void> {
   console.log("[cron]", JSON.stringify(tick));
 }
 
-/** Run one job with a fresh agent whose memory is the job's own session. */
-async function runJob(job: Job, env: Env): Promise<{ result: string; reasoning?: string; steps?: number; tools?: string[]; usage?: Record<string, number> }> {
-  const assistant = new Assistant({
+/**
+ * Run one job with a fresh agent. If the job is assigned a company `role`
+ * (meta.role), the agent takes that charter. If meta.qa is set, a QA agent
+ * adversarially tests the deliverable BEFORE it's marked done — the "no
+ * surprises" gate. Posts a result message to the company bus.
+ */
+async function runJob(job: Job, env: Env) {
+  const role = typeof job.meta?.role === "string" ? job.meta.role : undefined;
+  const charter = role ? charterFor(role) : undefined;
+  const builder = new Assistant({
     apiKey: env.ZAI_API_KEY,
     logLevel: "silent",
-    name: "Worker",
-    tools: builtinTools(),
+    name: charter?.title ?? "Builder",
+    ...(charter ? { system: systemFor(role!) } : {}),
+    tools: toolsForCharter(charter?.tools),
     ...(env.GLM_KV ? { store: new KVMemoryStore(env.GLM_KV, { prefix: "jobmem:", ttlSeconds: 60 * 60 * 24 * 30, maxMessages: 60 }), sessionId: job.id } : {}),
   });
-  const r = await assistant.ask(job.goal, { thinking: false });
+  const r = await builder.ask(job.goal, { thinking: Boolean(job.meta?.thinking) });
+
+  // QA gate — nothing reaches a customer unverified.
+  let qa: string | undefined;
+  if (job.meta?.qa) {
+    const tester = new Assistant({ apiKey: env.ZAI_API_KEY, logLevel: "silent", name: "QA", system: systemFor("qa"), tools: builtinTools() });
+    const v = await tester.ask(
+      `ORDER: ${job.goal}\n\nDELIVERABLE TO TEST:\n${r.text}\n\nTest it against the order. First line: PASS or FAIL. Then the reasons.`,
+      { thinking: false },
+    );
+    qa = v.text;
+  }
+
+  // Announce on the company bus.
+  if (env.GLM_KV) {
+    const verdict = qa ? (qa.toUpperCase().startsWith("FAIL") ? "FAIL" : "PASS") : "n/a";
+    await bus(env).post({ from: role ?? "worker", to: "all", kind: "result", ref: job.id, body: `${role ?? "worker"} finished "${job.goal.slice(0, 80)}" · QA: ${verdict}` });
+  }
+
   return {
     result: r.text,
     reasoning: r.reasoning,
     steps: r.steps,
     tools: r.toolRuns.map((t) => t.name),
     usage: r.usage as unknown as Record<string, number>,
+    ...(role ? { role } : {}),
+    ...(qa ? { qa } : {}),
   };
 }
 
+/** Resolve a charter's tool-name list to actual tool defs. ["*"] or undefined = all. */
+function toolsForCharter(names: string[] | undefined): ToolDef[] {
+  const all = builtinTools();
+  if (!names || names.includes("*")) return all;
+  if (names.length === 0) return [];
+  return all.filter((t) => names.includes(t.name));
+}
+
+async function handleBusPost(req: Request, env: Env): Promise<Response> {
+  if (!env.GLM_KV) return json({ error: "bus needs GLM_KV" }, 501);
+  const b = (await req.json()) as { from?: string; to?: string; kind?: string; body: string; ref?: string };
+  if (!b.body) return json({ error: "body required" }, 400);
+  const msg = await bus(env).post({ from: b.from ?? "human", to: b.to ?? "all", kind: b.kind ?? "note", body: b.body, ...(b.ref ? { ref: b.ref } : {}) });
+  return json({ message: msg });
+}
+
+async function handleBusRead(env: Env, url: URL): Promise<Response> {
+  if (!env.GLM_KV) return json({ error: "bus needs GLM_KV" }, 501);
+  const role = url.searchParams.get("role");
+  const limit = Number(url.searchParams.get("limit") ?? "30") || 30;
+  const messages = role ? await bus(env).inbox(role, limit) : await bus(env).feed(limit);
+  return json({ messages });
+}
+
+function bus(env: Env): MessageBus {
+  return new MessageBus(env.GLM_KV as unknown as KVLike, { feedLimit: 150, inboxLimit: 120, ttlSeconds: 60 * 60 * 24 * 14 });
+}
+
 function jobStore(env: Env): JobStore {
-  return new JobStore(env.GLM_KV as unknown as import("../src/memory").KVLike, { maxAttempts: 2, recentLimit: 200, ttlSeconds: 60 * 60 * 24 * 30 });
+  return new JobStore(env.GLM_KV as unknown as KVLike, { maxAttempts: 2, recentLimit: 200, ttlSeconds: 60 * 60 * 24 * 30 });
 }
 
 // ---- helpers ----

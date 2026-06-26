@@ -19,6 +19,10 @@ export interface Job {
   steps?: number;
   tools?: string[];
   usage?: Record<string, number>;
+  /** role that worked the job (company assignment). */
+  role?: string;
+  /** QA gate verdict (PASS/FAIL + reasons) when the job requested testing. */
+  qa?: string;
   error?: string;
   attempts: number;
   meta?: Record<string, unknown>;
@@ -31,6 +35,8 @@ export interface JobOutcome {
   steps?: number;
   tools?: string[];
   usage?: Record<string, number>;
+  role?: string;
+  qa?: string;
 }
 
 export type JobRunner = (job: Job) => Promise<JobOutcome>;
@@ -115,6 +121,8 @@ export class JobStore {
         if (outcome.steps !== undefined) job.steps = outcome.steps;
         if (outcome.tools) job.tools = outcome.tools;
         if (outcome.usage) job.usage = outcome.usage;
+        if (outcome.role) job.role = outcome.role;
+        if (outcome.qa) job.qa = outcome.qa;
       } catch (err) {
         job.error = err instanceof Error ? err.message : String(err);
         const maxAttempts = this.opts.maxAttempts ?? 1;
