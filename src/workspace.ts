@@ -59,4 +59,12 @@ export class Workspace {
       return [];
     }
   }
+
+  /** Keys of all shared docs — the "what's where" index. Needs a KV that supports list(). */
+  async listDocKeys(limit = 100): Promise<string[]> {
+    if (!this.kv.list) return [];
+    const prefix = `${this.p()}doc:`;
+    const res = await this.kv.list({ prefix, limit });
+    return res.keys.map((k) => k.name.slice(prefix.length));
+  }
 }

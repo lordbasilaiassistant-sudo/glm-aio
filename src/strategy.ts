@@ -8,6 +8,13 @@ export type Stage = "bootstrap" | "validating" | "first_revenue" | "growth";
 export interface CompanyState {
   revenueUsd: number;
   costsUsd: number;
+  /**
+   * Affiliate/sponsor credits funding the company's compute (z.ai etc.). This is the
+   * "investment" — Anthony + Claude fund compute, sponsors (affiliate programs) top it up.
+   * Becoming self-funding on compute (credits cover compute cost) is the FIRST goal,
+   * before any external profit.
+   */
+  sponsorCreditsUsd: number;
   /** mechanics proven to actually earn (cite the proof when adding). */
   validatedMechanics: string[];
   updatedAt?: string;
@@ -23,7 +30,7 @@ export interface StagePlan {
 }
 
 export function defaultState(): CompanyState {
-  return { revenueUsd: 0, costsUsd: 0, validatedMechanics: [] };
+  return { revenueUsd: 0, costsUsd: 0, sponsorCreditsUsd: 0, validatedMechanics: [] };
 }
 
 /** Derive stage from real state — no guessing. */
@@ -37,14 +44,15 @@ export function inferStage(s: CompanyState): Stage {
 const PLANS: Record<Stage, StagePlan> = {
   bootstrap: {
     stage: "bootstrap",
-    focus: "Find ONE mechanic worth validating. Spend nothing. Build the harness, not products.",
+    focus:
+      "You run on compute funded by your investors (Anthony + Claude) and topped up by sponsors (affiliate programs). FIRST goal: get to self-funding on compute via sponsor credits, while finding ONE mechanic worth validating. Spend nothing. Build the harness, not products.",
     priorities: [
+      "grow sponsor/affiliate credits (disclosed referral links where they fit) to self-fund compute",
       "pick one candidate with BUILT-IN distribution (a marketplace where money already moves)",
-      "design a $0 falsification test for it",
-      "improve the company's own tools + structure",
+      "design a $0 falsification test for it; keep improving the company's own tools + structure",
     ],
-    guardrails: ["no capital spent", "no scaling anything unvalidated", "one bet at a time", "no oversaturated slop"],
-    activeRoles: ["director", "researcher", "builder", "qa"],
+    guardrails: ["no capital spent", "no scaling anything unvalidated", "one bet at a time", "no oversaturated slop", "affiliate links always disclosed, only where they fit"],
+    activeRoles: ["director", "growth_manager", "researcher", "builder", "qa"],
   },
   validating: {
     stage: "validating",

@@ -17,7 +17,15 @@ export {
   type JobRunner,
 } from "./jobs";
 export { MessageBus, type BusMessage, type MessageBusOptions } from "./bus";
-export { COMPANY, charterFor, systemFor, byLayer, type AgentCharter, type Layer } from "./agents";
+export { COMPANY, charterFor, systemFor, byLayer, byDepartment, DELEGATABLE_ROLES, type AgentCharter, type Layer, type Department } from "./agents";
+export {
+  CustomToolStore,
+  runCustomTool,
+  testCustomTool,
+  verifyTool,
+  type CustomTool,
+  type TestCase,
+} from "./customtools";
 export { Workspace, type BoardNote, type WorkspaceOptions } from "./workspace";
 export {
   type Stage,

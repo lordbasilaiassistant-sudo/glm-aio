@@ -3,10 +3,10 @@ main = "worker/worker.ts"
 compatibility_date = "2024-09-23"
 compatibility_flags = ["nodejs_compat"]
 
-# Autonomous off-PC engine: every 5 minutes the cron works queued jobs.
-# (Cron only fires on a deployed Worker, not in `wrangler dev`.)
+# Autonomous off-PC engine: every 5 min works queued jobs; daily noon UTC the CFO
+# compiles the verification report for the investors. (Cron only fires when deployed.)
 [triggers]
-crons = ["*/5 * * * *"]
+crons = ["*/5 * * * *", "0 12 * * *"]
 
 [vars]
 CRON_JOBS_PER_TICK = "3"

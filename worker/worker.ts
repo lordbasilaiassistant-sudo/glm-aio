@@ -12,8 +12,9 @@ import { Assistant } from "../src/assistant";
 import { KVMemoryStore } from "../src/memory";
 import { JobStore, type Job } from "../src/jobs";
 import { MessageBus } from "../src/bus";
-import { COMPANY, systemFor, charterFor, byLayer } from "../src/agents";
+import { COMPANY, systemFor, charterFor, byLayer, byDepartment, DELEGATABLE_ROLES } from "../src/agents";
 import { Workspace } from "../src/workspace";
+import { CustomToolStore } from "../src/customtools";
 import { defaultState, inferStage, strategyFor, type CompanyState } from "../src/strategy";
 import { nowIso } from "../src/util";
 import type { Message } from "../src/types";
@@ -82,12 +83,12 @@ export default {
     }
     if (req.method === "GET" && url.pathname === "/company") {
       return json({
-        roster: COMPANY.map((c) => ({ role: c.role, title: c.title, layer: c.layer, job: c.charter })),
+        roster: COMPANY.map((c) => ({ role: c.role, title: c.title, department: c.department, layer: c.layer, job: c.charter })),
+        departments: Object.fromEntries(
+          Object.entries(byDepartment()).map(([dept, roles]) => [dept, roles.map((c) => ({ role: c.role, title: c.title, reportsTo: c.reportsTo, manages: c.manages }))]),
+        ),
         layers: Object.fromEntries(
-          Object.entries(byLayer()).map(([layer, roles]) => [
-            layer,
-            roles.map((c) => ({ role: c.role, title: c.title, reportsTo: c.reportsTo, manages: c.manages })),
-          ]),
+          Object.entries(byLayer()).map(([layer, roles]) => [layer, roles.map((c) => c.role)]),
         ),
       });
     }
@@ -95,6 +96,9 @@ export default {
       const s = await companyState(env);
       const stage = inferStage(s);
       return json({ stage, plan: strategyFor(stage), state: s });
+    }
+    if (req.method === "GET" && url.pathname === "/directory") {
+      return json(await orgIndex(env));
     }
 
     // --- auth gate (protects your free quota) ---
@@ -122,9 +126,34 @@ export default {
 
   // Cron Triggers (configured in wrangler.toml) fire here — autonomous, off-PC.
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
-    ctx.waitUntil(runCron(event, env));
+    if (event.cron === "0 12 * * *") ctx.waitUntil(runDailyReport(env));
+    else ctx.waitUntil(runCron(event, env));
   },
 };
+
+/** Daily verification loop: the CFO compiles what the company did + believed profits (with
+ * sources, unverified flagged) for the investors. Written to the workspace; the human verifies. */
+async function runDailyReport(env: Env): Promise<void> {
+  if (!env.GLM_KV) return;
+  const ws = new Workspace(env.GLM_KV as unknown as KVLike, {});
+  const notes = await ws.board(30);
+  const state = await companyState(env);
+  const cfo = new Assistant({
+    apiKey: env.ZAI_API_KEY,
+    logLevel: "silent",
+    name: "CFO",
+    system: systemFor("cfo"),
+    tools: resolveTools(charterFor("cfo")?.tools, env),
+    store: new KVMemoryStore(env.GLM_KV, { prefix: "jobmem:", ttlSeconds: 60 * 60 * 24 * 14, maxMessages: 30 }),
+    sessionId: "cfo:daily",
+  });
+  await cfo.ask(
+    `Compile today's daily report for the investors (Anthony + Claude). State: ${JSON.stringify(state)}. Recent activity: ${JSON.stringify(notes.slice(0, 18))}. ` +
+      `Summarize what the company did, any profit it BELIEVES it made (cite the source/evidence per claim; mark anything you can't prove as 'unverified'), and exactly what a human must verify. Save it with write_doc(key:'report:daily', ...) and post_note a one-line summary.`,
+    { thinking: false },
+  );
+  console.log("[daily-report] compiled at", nowIso());
+}
 
 // ---- handlers ----
 
@@ -301,7 +330,57 @@ function specialToolset(env: Env): Record<string, ToolDef> {
       parameters: { type: "object", properties: { text: { type: "string" }, by: { type: "string" } }, required: ["text"] },
       handler: async (a: { text: string; by?: string }) => ({ posted: (await ws.postNote(a.by ?? "agent", a.text)).id }),
     }),
+    org_index: tool({
+      name: "org_index",
+      description: "Get the company map — departments + roles, shared workspace docs (what's where), self-authored tools, and the current financial stage. Use to navigate the company as it grows.",
+      parameters: { type: "object", properties: {} },
+      handler: async () => orgIndex(env),
+    }),
+    create_tool: tool({
+      name: "create_tool",
+      description: "Register a NEW reusable tool for the company: a pure JS function body of `args` that returns a value (no network, no side effects). Starts UNVERIFIED; only usable after its test cases pass.",
+      parameters: {
+        type: "object",
+        properties: {
+          name: { type: "string", description: "a-z, 0-9, _ (3-41 chars)" },
+          description: { type: "string" },
+          parameters: { type: "object", description: "JSON schema for args" },
+          body: { type: "string", description: "JS body, e.g. 'return args.a + args.b;'" },
+        },
+        required: ["name", "description", "body"],
+      },
+      handler: async (a: { name: string; description: string; parameters?: Record<string, unknown>; body: string }) => {
+        try {
+          const t = await new CustomToolStore(env.GLM_KV as unknown as KVLike).create({ name: a.name, description: a.description, parameters: a.parameters ?? { type: "object", properties: {} }, body: a.body, createdBy: "toolsmith" });
+          return { created: t.name, verified: false, note: "register test cases to verify it before use" };
+        } catch (e) {
+          return { error: e instanceof Error ? e.message : String(e) };
+        }
+      },
+    }),
+    list_tools: tool({
+      name: "list_tools",
+      description: "List the company's self-authored tools and whether each is verified.",
+      parameters: { type: "object", properties: {} },
+      handler: async () => ({ tools: (await new CustomToolStore(env.GLM_KV as unknown as KVLike).all()).map((t) => ({ name: t.name, verified: t.verified, description: t.description })) }),
+    }),
   };
+}
+
+/** Assemble the company map — the "what's where" the COO maintains as the company grows. */
+async function orgIndex(env: Env): Promise<Record<string, unknown>> {
+  const departments = Object.fromEntries(
+    Object.entries(byDepartment()).map(([dept, roles]) => [dept, roles.map((c) => c.role)]),
+  );
+  const state = await companyState(env);
+  const stage = inferStage(state);
+  let docs: string[] = [];
+  let customTools: Array<{ name: string; verified: boolean }> = [];
+  if (env.GLM_KV) {
+    docs = await new Workspace(env.GLM_KV as unknown as KVLike, {}).listDocKeys();
+    customTools = (await new CustomToolStore(env.GLM_KV as unknown as KVLike).all()).map((t) => ({ name: t.name, verified: t.verified }));
+  }
+  return { departments, stage, docs, customTools, builtinTools: builtinTools().map((t) => t.name) };
 }
 
 function strategyTool(env: Env): ToolDef {
@@ -338,7 +417,7 @@ function dispatchTaskTool(store: JobStore): ToolDef {
       type: "object",
       properties: {
         goal: { type: "string", description: "the scoped task to delegate" },
-        role: { type: "string", enum: ["eng_manager", "growth_manager", "builder", "data", "researcher", "writer", "qa", "scribe"], description: "which role works it" },
+        role: { type: "string", enum: DELEGATABLE_ROLES, description: "which role works it" },
         qa: { type: "boolean", description: "run the QA gate on the result before it is marked done" },
       },
       required: ["goal"],
