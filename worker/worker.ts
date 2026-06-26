@@ -17,6 +17,7 @@ import { Workspace } from "../src/workspace";
 import { CustomToolStore } from "../src/customtools";
 import { defaultState, inferStage, strategyFor, type CompanyState } from "../src/strategy";
 import { nowIso } from "../src/util";
+import { redact } from "../src/debug";
 import type { Message } from "../src/types";
 import type { KVLike } from "../src/memory";
 import { builtinTools } from "./tools";
@@ -67,6 +68,15 @@ export default {
       });
     }
     if (url.pathname === "/healthz") return json({ ok: true });
+
+    // --- auth gate (timing-safe) — everything below requires the gateway token ---
+    if (env.GATEWAY_TOKEN) {
+      const provided = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
+      const a = new TextEncoder().encode(provided);
+      const b = new TextEncoder().encode(env.GATEWAY_TOKEN);
+      if (a.length !== b.length || !crypto.subtle.timingSafeEqual(a, b)) return json({ error: "unauthorized" }, 401);
+    }
+
     if (req.method === "GET" && url.pathname === "/registry") {
       return json({
         model: "glm-4.5-flash (free)",
@@ -101,12 +111,6 @@ export default {
       return json(await orgIndex(env));
     }
 
-    // --- auth gate (protects your free quota) ---
-    if (env.GATEWAY_TOKEN) {
-      const token = (req.headers.get("authorization") ?? "").replace(/^Bearer\s+/i, "");
-      if (token !== env.GATEWAY_TOKEN) return json({ error: "unauthorized" }, 401);
-    }
-
     try {
       if (req.method === "POST" && url.pathname === "/chat") return await handleChat(req, env, url);
       if (req.method === "POST" && url.pathname === "/ask") return await handleAsk(req, env);
@@ -117,10 +121,11 @@ export default {
       if (req.method === "POST" && url.pathname === "/bus") return await handleBusPost(req, env);
       if (req.method === "GET" && url.pathname === "/bus") return await handleBusRead(env, url);
       if (req.method === "GET" && url.pathname === "/workspace") return await handleWorkspace(env, url);
+      if (req.method === "POST" && url.pathname === "/review") return await handleReview(req, env);
       return json({ error: "not found" }, 404);
     } catch (err: unknown) {
       const e = err as { message?: string; kind?: string };
-      return json({ error: e?.message ?? String(err), kind: e?.kind }, statusFor(err));
+      return json({ error: redact(e?.message ?? String(err)), kind: e?.kind }, statusFor(err));
     }
   },
 
@@ -136,6 +141,9 @@ export default {
  * step, so the company keeps working toward a verified-revenue product overnight. */
 async function runDirectorAdvance(env: Env): Promise<void> {
   if (!env.GLM_KV) return;
+  const hour = nowIso().slice(0, 13);
+  if (await env.GLM_KV.get("cron:advance:" + hour)) return; // idempotency: once per hour
+  await env.GLM_KV.put("cron:advance:" + hour, "done", { expirationTtl: 7200 });
   const pending = await jobStore(env).pendingIds();
   if (pending.length > 0) { console.log("[advance] queue busy, skip"); return; }
   const director = new Assistant({
@@ -148,7 +156,9 @@ async function runDirectorAdvance(env: Env): Promise<void> {
     sessionId: "director:mission",
   });
   await director.ask(
-    "Advance the core-product mission. read_doc('mission'), read_doc('plan'), and check the board. Decide the SINGLE next concrete step toward the first VERIFIED-revenue product and dispatch_task it (qa:true if it is a deliverable). If the last step stalled or a worker reported a blocker (e.g. missing shared data), fix the approach — make sure workers save outputs with write_doc and read each other's docs. One good step; keep momentum.",
+    "Advance the core-product mission. read_doc('mission'), read_doc('plan'), and check the board. " +
+      "CHECK FOR 'INVESTOR REVIEW' notes on the board — these are capable external critiques from the investors and are GROUND TRUTH on quality. A product is NOT done until it clears investor review (rating >= 7) AND has verified revenue. If a product was rated low, dispatch a fix that targets the SPECIFIC critique, or kill it and pivot. " +
+      "Otherwise decide the SINGLE next concrete step toward the first VERIFIED-revenue product and dispatch_task it (qa:true if it is a deliverable). Make sure workers save outputs with write_doc and read each other's docs. One good step; keep momentum.",
     { thinking: false },
   );
   console.log("[advance] director nudged at", nowIso());
@@ -158,6 +168,9 @@ async function runDirectorAdvance(env: Env): Promise<void> {
  * sources, unverified flagged) for the investors. Written to the workspace; the human verifies. */
 async function runDailyReport(env: Env): Promise<void> {
   if (!env.GLM_KV) return;
+  const day = nowIso().slice(0, 10);
+  if (await env.GLM_KV.get("cron:daily:" + day)) return; // idempotency: once per day
+  await env.GLM_KV.put("cron:daily:" + day, "done", { expirationTtl: 86400 });
   const ws = new Workspace(env.GLM_KV as unknown as KVLike, {});
   const notes = await ws.board(30);
   const state = await companyState(env);
@@ -217,12 +230,15 @@ async function handleEnqueue(req: Request, env: Env): Promise<Response> {
   const body = (await req.json()) as { goal: string; meta?: Record<string, unknown>; now?: boolean };
   if (typeof body.goal !== "string" || !body.goal.trim()) return badInput("goal required");
   if (body.goal.length > LIMITS.goal) return badInput(`goal too long (max ${LIMITS.goal})`);
+  if (body.meta !== undefined && (typeof body.meta !== "object" || body.meta === null || JSON.stringify(body.meta).length > LIMITS.meta)) {
+    return badInput("meta invalid or too large");
+  }
   const store = jobStore(env);
   let job: Job;
   try {
     job = await store.enqueue(body.goal, "api", body.meta);
   } catch (e) {
-    return json({ error: e instanceof Error ? e.message : "enqueue failed" }, 429);
+    return json({ error: redact(e instanceof Error ? e.message : "enqueue failed") }, 429);
   }
   // Optional synchronous run for callers that want the answer immediately.
   if (body.now) {
@@ -354,7 +370,12 @@ function specialToolset(env: Env): Record<string, ToolDef> {
       name: "write_doc",
       description: "Write/overwrite a shared workspace document so the whole company can see it.",
       parameters: { type: "object", properties: { key: { type: "string" }, content: { type: "string" } }, required: ["key", "content"] },
-      handler: async (a: { key: string; content: string }) => { await ws.writeDoc(a.key, a.content); return { ok: true, key: a.key }; },
+      handler: async (a: { key: string; content: string }) => {
+        if (typeof a.key !== "string" || !a.key.trim() || a.key.length > LIMITS.docKey) return { error: "invalid doc key" };
+        if (typeof a.content !== "string" || a.content.length > LIMITS.doc) return { error: `document too large (max ${LIMITS.doc})` };
+        await ws.writeDoc(a.key, a.content);
+        return { ok: true, key: a.key };
+      },
     }),
     post_note: tool({
       name: "post_note",
@@ -462,7 +483,7 @@ function dispatchTaskTool(store: JobStore): ToolDef {
         const job = await store.enqueue(a.goal, "delegation", meta);
         return { queued: job.id, role: a.role ?? "any" };
       } catch (e) {
-        return { error: e instanceof Error ? e.message : "could not queue task" };
+        return { error: redact(e instanceof Error ? e.message : "could not queue task") };
       }
     },
   });
@@ -493,6 +514,25 @@ async function handleWorkspace(env: Env, url: URL): Promise<Response> {
   return json({ board: await ws.board(25) });
 }
 
+/** Investor review gate — Claude or Anthony rates a product 1-10 with a critique; the
+ * company reads it (board + review:<product> doc) and must iterate or kill on it. */
+async function handleReview(req: Request, env: Env): Promise<Response> {
+  if (!env.GLM_KV) return json({ error: "review needs GLM_KV" }, 501);
+  const b = (await req.json()) as { product?: string; rating?: number; critique?: string; by?: string };
+  const product = String(b.product ?? "").trim().slice(0, 80);
+  const rating = Number(b.rating);
+  const critique = String(b.critique ?? "").trim().slice(0, 1000);
+  if (!product) return badInput("product required");
+  if (!Number.isFinite(rating) || rating < 1 || rating > 10) return badInput("rating must be 1-10");
+  if (!critique) return badInput("critique required");
+  const by = String(b.by ?? "investor").slice(0, 40);
+  const ws = new Workspace(env.GLM_KV as unknown as KVLike, {});
+  const review = { product, rating, critique, by, at: nowIso() };
+  await ws.writeDoc(`review:${product}`, JSON.stringify(review));
+  await ws.postNote(by, `INVESTOR REVIEW [${product}] ${rating}/10 — ${critique}`);
+  return json({ ok: true, review });
+}
+
 function bus(env: Env): MessageBus {
   return new MessageBus(env.GLM_KV as unknown as KVLike, { feedLimit: 150, inboxLimit: 120, ttlSeconds: 60 * 60 * 24 * 14 });
 }
@@ -502,7 +542,7 @@ function jobStore(env: Env): JobStore {
 }
 
 // ---- input hardening ----
-const LIMITS = { input: 8000, goal: 8000, busBody: 4000, messages: 60, messageChars: 24000, totalChat: 200_000 };
+const LIMITS = { input: 8000, goal: 8000, busBody: 4000, messages: 60, messageChars: 24000, totalChat: 200_000, doc: 1_000_000, docKey: 200, meta: 2000 };
 function badInput(msg: string): Response {
   return json({ error: msg }, 400);
 }
@@ -550,7 +590,7 @@ function sseFrom(gen: AsyncGenerator<unknown, unknown, void>): ReadableStream<Ui
         controller.enqueue(enc.encode(`data: ${JSON.stringify(value)}\n\n`));
       } catch (err: unknown) {
         const e = err as { message?: string };
-        controller.enqueue(enc.encode(`data: ${JSON.stringify({ type: "error", error: e?.message ?? String(err) })}\n\n`));
+        controller.enqueue(enc.encode(`data: ${JSON.stringify({ type: "error", error: redact(e?.message ?? String(err)) })}\n\n`));
         controller.close();
       }
     },

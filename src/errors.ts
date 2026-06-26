@@ -5,6 +5,7 @@
 //   5xx              -> server                 (retry)
 //   network/timeout  -> transient              (retry)
 // The distinction matters: blindly retrying a 1113 would hammer the API for nothing.
+import { redact } from "./debug";
 
 export type GLMErrorKind =
   | "auth"
@@ -68,9 +69,9 @@ export function classifyHttp(status: number, body: string, retryAfter?: number):
   try {
     const j = JSON.parse(body);
     code = j?.error?.code ?? j?.code;
-    apiMessage = j?.error?.message ?? j?.message ?? "";
+    apiMessage = redact(j?.error?.message ?? j?.message ?? "");
   } catch {
-    apiMessage = body.slice(0, 200);
+    apiMessage = redact(body.slice(0, 200));
   }
 
   const codeStr = code === undefined ? "" : String(code);

@@ -321,10 +321,11 @@ function nowMs(): number {
 /** Parse an SSE response body into a stream of decoded JSON objects (or null to skip). */
 async function* parseSSE(resp: Response): AsyncGenerator<any | null, void, void> {
   if (!resp.body) throw new GLMError("stream", "No response body to stream.", { retryable: false });
-  const reader = (resp.body as ReadableStream<Uint8Array>).getReader();
   const decoder = new TextDecoder();
   let buf = "";
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
   try {
+    reader = (resp.body as ReadableStream<Uint8Array>).getReader();
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
@@ -348,6 +349,6 @@ async function* parseSSE(resp: Response): AsyncGenerator<any | null, void, void>
       }
     }
   } finally {
-    reader.releaseLock?.();
+    reader?.releaseLock?.();
   }
 }

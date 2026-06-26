@@ -63,6 +63,13 @@ export class CustomToolStore {
   /** Register a new (unverified) tool. Throws on a bad name. */
   async create(def: { name: string; description: string; parameters: Record<string, unknown>; body: string; createdBy?: string }): Promise<CustomTool> {
     if (!NAME_RE.test(def.name)) throw new Error(`invalid tool name "${def.name}" (use a-z, 0-9, _, 3-41 chars)`);
+    if ((await this.all()).length >= 100) throw new Error("tool limit reached (100)");
+    if ((def.body?.length ?? 0) > 16_000) throw new Error("tool body too large (max 16KB)");
+    if ((def.description?.length ?? 0) > 1_000) throw new Error("description too large (max 1KB)");
+    // defense-in-depth: the body is run via new Function on the Node runner — block obvious escapes
+    if (/\b(require|process|child_process|import|globalThis|fetch|eval|Function|constructor)\b/.test(def.body ?? "")) {
+      throw new Error("forbidden token in tool body (must be a pure function of args)");
+    }
     const t: CustomTool = {
       name: def.name,
       description: def.description,

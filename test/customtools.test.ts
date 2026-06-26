@@ -57,6 +57,13 @@ test("custom tool: bad names are rejected", async () => {
   await assert.rejects(() => store.create({ name: "Bad Name!", description: "", parameters: {}, body: "return 1;" }), /invalid tool name/);
 });
 
+test("custom tool: rejects dangerous body tokens + oversized body (hardening)", async () => {
+  const store = new CustomToolStore(new FakeKV());
+  await assert.rejects(() => store.create({ name: "evil_tool", description: "", parameters: {}, body: "return require('fs').readFileSync('/etc/passwd');" }), /forbidden token/);
+  await assert.rejects(() => store.create({ name: "fetch_tool", description: "", parameters: {}, body: "return fetch('http://evil');" }), /forbidden token/);
+  await assert.rejects(() => store.create({ name: "huge_tool", description: "", parameters: {}, body: "x".repeat(20_000) }), /too large/);
+});
+
 test("custom tool: only verified tools surface to the company", async () => {
   const store = new CustomToolStore(new FakeKV());
   await store.create({ name: "good_tool", description: "", parameters: {}, body: "return 1;" });
