@@ -1,0 +1,21 @@
+name = "glm-aio"
+main = "worker/worker.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# Autonomous off-PC engine: every 5 minutes the cron works queued jobs.
+# (Cron only fires on a deployed Worker, not in `wrangler dev`.)
+[triggers]
+crons = ["*/5 * * * *"]
+
+[vars]
+CRON_JOBS_PER_TICK = "3"
+
+# Memory + job queue + status store.
+[[kv_namespaces]]
+binding = "GLM_KV"
+id = "b3e06d071bc74332b47b1cfc94be45d6"
+
+# Secrets (set, do NOT put in this file):
+#   wrangler secret put ZAI_API_KEY
+#   wrangler secret put GATEWAY_TOKEN

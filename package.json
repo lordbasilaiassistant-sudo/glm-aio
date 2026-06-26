@@ -1,0 +1,31 @@
+{
+  "name": "glm-aio",
+  "version": "0.1.0",
+  "description": "All-in-one harness for GLM (z.ai) models — runs on Node and Cloudflare Workers. Efficient, accurate, fully instrumented.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "smoke": "tsx scripts/smoke.ts",
+    "example": "tsx examples/local.ts",
+    "agent": "tsx examples/agent.ts",
+    "test": "tsx --test test/*.test.ts",
+    "test:live": "RUN_LIVE=1 tsx --test test/live.test.ts",
+    "typecheck": "tsc --noEmit",
+    "deploy": "wrangler deploy",
+    "dev:worker": "wrangler dev"
+  },
+  "keywords": ["glm", "z.ai", "zhipu", "llm", "cloudflare-workers", "ai-agent", "harness"],
+  "license": "MIT",
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240620.0",
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0",
+    "wrangler": "^3.60.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

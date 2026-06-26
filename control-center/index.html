@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>glm·aio — mission control</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Sora:wght@400;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet" />
+<style>
+  :root {
+    --bg: #0a1417;
+    --bg-2: #0d1c20;
+    --panel: #0f2329;
+    --hair: rgba(120, 210, 196, 0.12);
+    --hair-2: rgba(120, 210, 196, 0.20);
+    --ink: #dbe9e5;
+    --muted: #6f8d88;
+    --filament: #ffb454;   /* warm primary — the "live filament" */
+    --mint: #38e0c8;       /* telemetry accent */
+    --ok: #5fd98f;
+    --warn: #ffd166;
+    --alert: #ff6b5e;
+    --display: "Space Grotesk", system-ui, sans-serif;
+    --body: "Sora", system-ui, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background:
+      radial-gradient(1200px 600px at 80% -10%, rgba(56, 224, 200, 0.06), transparent 60%),
+      radial-gradient(900px 500px at 0% 0%, rgba(255, 180, 84, 0.05), transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font-family: var(--body);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+  .wrap { max-width: 960px; margin: 0 auto; padding: 22px 20px 64px; }
+
+  /* ---- header / signature heartbeat ---- */
+  header { position: relative; border: 1px solid var(--hair); border-radius: 14px; overflow: hidden; background: linear-gradient(180deg, var(--bg-2), var(--panel)); }
+  #pulse { display: block; width: 100%; height: 96px; }
+  .head-row { position: absolute; inset: 0; display: flex; align-items: center; justify-content: space-between; padding: 0 20px; pointer-events: none; }
+  .brand { display: flex; align-items: baseline; gap: 12px; }
+  .dot { width: 11px; height: 11px; border-radius: 50%; background: var(--filament); box-shadow: 0 0 14px var(--filament); align-self: center; }
+  .brand h1 { font-family: var(--display); font-weight: 700; font-size: 26px; letter-spacing: -0.02em; margin: 0; }
+  .brand .eyebrow { font-family: var(--mono); font-size: 11px; letter-spacing: 0.28em; text-transform: uppercase; color: var(--mint); }
+  .status-pill { pointer-events: auto; display: inline-flex; align-items: center; gap: 8px; font-family: var(--mono); font-size: 12px; padding: 6px 12px; border: 1px solid var(--hair-2); border-radius: 999px; background: rgba(10,20,23,0.5); backdrop-filter: blur(4px); }
+  .status-pill .led { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .status-pill.online .led { background: var(--ok); box-shadow: 0 0 9px var(--ok); }
+  .status-pill.offline .led { background: var(--alert); }
+
+  /* ---- telemetry strip ---- */
+  .telem { display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px; margin-top: 14px; border: 1px solid var(--hair); border-radius: 12px; overflow: hidden; background: var(--hair); }
+  .telem .cell { background: var(--bg-2); padding: 13px 16px; }
+  .telem .k { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); }
+  .telem .v { font-family: var(--display); font-size: 19px; font-weight: 500; margin-top: 3px; color: var(--ink); }
+  .telem .v.accent { color: var(--filament); }
+
+  /* ---- panels ---- */
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+  .panel { border: 1px solid var(--hair); border-radius: 14px; background: linear-gradient(180deg, var(--bg-2), var(--panel)); padding: 16px; }
+  .panel.full { grid-column: 1 / -1; }
+  .panel h2 { font-family: var(--mono); font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--mint); margin: 0 0 12px; display: flex; align-items: center; gap: 9px; }
+  .panel h2::before { content: ""; width: 6px; height: 6px; background: var(--mint); border-radius: 1px; box-shadow: 0 0 8px var(--mint); }
+
+  textarea, input[type="text"], input[type="password"] {
+    width: 100%; background: #081215; border: 1px solid var(--hair-2); border-radius: 10px; color: var(--ink);
+    font-family: var(--body); font-size: 14px; padding: 11px 13px; resize: vertical;
+  }
+  textarea:focus, input:focus { outline: 2px solid var(--mint); outline-offset: 1px; border-color: transparent; }
+  label.field { display: block; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin: 0 0 6px; }
+
+  .btn { font-family: var(--display); font-weight: 500; font-size: 14px; border-radius: 10px; padding: 10px 16px; border: 1px solid transparent; cursor: pointer; transition: transform 0.06s ease, background 0.15s ease; }
+  .btn:active { transform: translateY(1px); }
+  .btn.primary { background: var(--filament); color: #2a1602; }
+  .btn.primary:hover { background: #ffc169; }
+  .btn.ghost { background: transparent; color: var(--ink); border-color: var(--hair-2); }
+  .btn.ghost:hover { border-color: var(--mint); color: var(--mint); }
+  .btn:focus-visible { outline: 2px solid var(--mint); outline-offset: 2px; }
+  .row { display: flex; gap: 9px; align-items: center; flex-wrap: wrap; }
+  .row.end { justify-content: flex-end; margin-top: 11px; }
+  .spacer { flex: 1; }
+
+  .toggle { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono); font-size: 12px; color: var(--muted); cursor: pointer; user-select: none; }
+  .toggle input { accent-color: var(--filament); }
+
+  /* ---- chat transcript ---- */
+  .log { display: flex; flex-direction: column; gap: 10px; max-height: 320px; overflow-y: auto; margin-bottom: 12px; padding-right: 4px; }
+  .msg { padding: 10px 13px; border-radius: 10px; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
+  .msg.you { background: rgba(56, 224, 200, 0.07); border: 1px solid rgba(56, 224, 200, 0.18); align-self: flex-end; max-width: 86%; }
+  .msg.agent { background: #0a181c; border: 1px solid var(--hair); align-self: flex-start; max-width: 92%; }
+  .msg .who { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--muted); margin-bottom: 5px; }
+  .msg .tools { font-family: var(--mono); font-size: 11px; color: var(--filament); margin-top: 7px; opacity: 0.85; }
+  .empty { color: var(--muted); font-size: 13px; font-family: var(--mono); padding: 8px 2px; }
+
+  /* ---- jobs ---- */
+  .jobs { display: flex; flex-direction: column; gap: 8px; }
+  .job { border: 1px solid var(--hair); border-radius: 10px; padding: 11px 13px; background: #0a181c; }
+  .job .top { display: flex; align-items: center; gap: 10px; }
+  .job .goal { flex: 1; font-size: 13.5px; }
+  .job .res { margin-top: 8px; font-family: var(--mono); font-size: 12.5px; color: var(--mint); white-space: pre-wrap; word-break: break-word; }
+  .job .id { font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+  .chip { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--hair-2); }
+  .chip.done { color: var(--ok); border-color: rgba(95,217,143,0.4); }
+  .chip.pending { color: var(--warn); border-color: rgba(255,209,102,0.4); }
+  .chip.running { color: var(--mint); border-color: rgba(56,224,200,0.4); }
+  .chip.error { color: var(--alert); border-color: rgba(255,107,94,0.4); }
+
+  /* ---- capabilities ---- */
+  .caps { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .caps .col h3 { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; }
+  .caps ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+  .caps li { font-size: 13px; padding: 7px 10px; border: 1px solid var(--hair); border-radius: 8px; background: #0a181c; }
+  .caps li b { font-family: var(--mono); font-weight: 600; color: var(--ink); }
+  .caps li span { color: var(--muted); font-size: 12px; }
+
+  footer { margin-top: 22px; text-align: center; font-size: 12px; color: var(--muted); font-family: var(--mono); }
+  footer a { color: var(--filament); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  /* ---- connect gate ---- */
+  .gate { position: fixed; inset: 0; background: rgba(6,12,14,0.86); backdrop-filter: blur(6px); display: grid; place-items: center; z-index: 50; padding: 20px; }
+  .gate .card { width: 100%; max-width: 420px; border: 1px solid var(--hair-2); border-radius: 16px; background: linear-gradient(180deg, var(--bg-2), var(--panel)); padding: 26px; }
+  .gate h2 { font-family: var(--display); font-weight: 700; font-size: 22px; margin: 0 0 4px; }
+  .gate p { color: var(--muted); font-size: 13px; margin: 0 0 18px; }
+  .gate .field-group { margin-bottom: 14px; }
+  .gate .err { color: var(--alert); font-size: 12.5px; font-family: var(--mono); min-height: 18px; margin-top: 8px; }
+  .hidden { display: none !important; }
+
+  @media (max-width: 760px) {
+    .grid, .caps, .telem { grid-template-columns: 1fr 1fr; }
+    .grid { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 460px) { .telem { grid-template-columns: 1fr 1fr; } }
+  @media (prefers-reduced-motion: reduce) { #pulse { opacity: 0.7; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <canvas id="pulse" aria-hidden="true"></canvas>
+    <div class="head-row">
+      <div class="brand">
+        <span class="dot"></span>
+        <h1>glm·aio</h1>
+        <span class="eyebrow">mission control</span>
+      </div>
+      <div class="status-pill offline" id="statusPill"><span class="led"></span><span id="statusText">offline</span></div>
+    </div>
+  </header>
+
+  <div class="telem">
+    <div class="cell"><div class="k">Model</div><div class="v accent" id="tModel">—</div></div>
+    <div class="cell"><div class="k">Pending jobs</div><div class="v" id="tPending">—</div></div>
+    <div class="cell"><div class="k">Last heartbeat</div><div class="v" id="tTick">—</div></div>
+    <div class="cell"><div class="k">Memory</div><div class="v" id="tKv">—</div></div>
+  </div>
+
+  <div class="grid">
+    <div class="panel">
+      <h2>Talk to the agent</h2>
+      <div class="log" id="chatLog"><div class="empty">No messages yet. Ask it anything — it remembers this conversation.</div></div>
+      <textarea id="chatInput" rows="2" placeholder="Ask the agent…"></textarea>
+      <div class="row end">
+        <label class="toggle"><input type="checkbox" id="thinkToggle" /> deep thinking</label>
+        <div class="spacer"></div>
+        <button class="btn primary" id="sendBtn">Send</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Dispatch a job</h2>
+      <p style="color:var(--muted);font-size:13px;margin:0 0 10px">Hand off a goal. The agent works it off your PC and posts the result below.</p>
+      <textarea id="jobInput" rows="3" placeholder="e.g. Summarize the latest Base gas trends in 3 bullets."></textarea>
+      <div class="row end">
+        <button class="btn ghost" id="queueBtn">Queue for cron</button>
+        <button class="btn primary" id="runBtn">Run now</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel full" style="margin-top:14px">
+    <h2>Jobs <span style="flex:1"></span><button class="btn ghost" id="refreshJobs" style="padding:5px 11px;font-size:12px">Refresh</button></h2>
+    <div class="jobs" id="jobsList"><div class="empty">No jobs yet.</div></div>
+  </div>
+
+  <div class="panel full" style="margin-top:14px">
+    <h2>Capabilities</h2>
+    <div class="caps">
+      <div class="col"><h3>Tools</h3><ul id="capTools"><li><span>loading…</span></li></ul></div>
+      <div class="col"><h3>Automations &amp; apps</h3><ul id="capAuto"><li><span>loading…</span></li></ul></div>
+    </div>
+  </div>
+
+  <footer>
+    runs on free GLM via z.ai · need the bigger models? referral (helps fund our compute):
+    <a href="https://z.ai/subscribe?ic=BWTG6TRYYQ" target="_blank" rel="noopener">z.ai Coding Plan</a>
+    <br /><button class="btn ghost" id="disconnect" style="margin-top:10px;font-size:11px;padding:4px 10px">Disconnect</button>
+  </footer>
+</div>
+
+<!-- connect gate -->
+<div class="gate" id="gate">
+  <div class="card">
+    <h2>Connect to your agent</h2>
+    <p>One-time. Stored only in this browser — never sent anywhere but your Worker.</p>
+    <div class="field-group">
+      <label class="field" for="gUrl">Worker URL</label>
+      <input type="text" id="gUrl" value="https://glm-aio.thryx.workers.dev" spellcheck="false" />
+    </div>
+    <div class="field-group">
+      <label class="field" for="gToken">Gateway token</label>
+      <input type="password" id="gToken" placeholder="Bearer token" spellcheck="false" />
+    </div>
+    <button class="btn primary" id="connectBtn" style="width:100%">Connect</button>
+    <div class="err" id="gErr"></div>
+  </div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const LS = { url: "glmaio.url", token: "glmaio.token", session: "glmaio.session" };
+  const state = {
+    url: localStorage.getItem(LS.url) || "https://glm-aio.thryx.workers.dev",
+    token: localStorage.getItem(LS.token) || "",
+    session: localStorage.getItem(LS.session) || ("cc-" + Math.random().toString(36).slice(2, 10)),
+    activity: 0,
+  };
+  localStorage.setItem(LS.session, state.session);
+
+  async function api(path, opts = {}) {
+    const headers = Object.assign({ "content-type": "application/json" }, opts.headers || {});
+    if (state.token) headers.authorization = "Bearer " + state.token;
+    const res = await fetch(state.url.replace(/\/$/, "") + path, Object.assign({}, opts, { headers }));
+    if (res.status === 401) { showGate("Unauthorized — that gateway token didn't work. Try again."); throw new Error("unauthorized"); }
+    if (!res.ok) { const t = await res.text(); throw new Error("HTTP " + res.status + " · " + t.slice(0, 120)); }
+    return res.json();
+  }
+
+  // ---- connect gate ----
+  function showGate(msg) { $("gate").classList.remove("hidden"); $("gErr").textContent = msg || ""; setOnline(false); }
+  function hideGate() { $("gate").classList.add("hidden"); }
+  $("connectBtn").onclick = async () => {
+    state.url = $("gUrl").value.trim();
+    state.token = $("gToken").value.trim();
+    $("gErr").textContent = "";
+    try {
+      const s = await api("/status");
+      localStorage.setItem(LS.url, state.url);
+      localStorage.setItem(LS.token, state.token);
+      hideGate(); boot(); applyStatus(s);
+    } catch (e) { $("gErr").textContent = e.message === "unauthorized" ? "Unauthorized — check the token." : "Couldn't reach the Worker. Check the URL."; }
+  };
+  $("disconnect").onclick = () => { localStorage.removeItem(LS.token); state.token = ""; showGate(""); };
+
+  // ---- status / telemetry ----
+  function setOnline(on) {
+    const p = $("statusPill");
+    p.classList.toggle("online", on); p.classList.toggle("offline", !on);
+    $("statusText").textContent = on ? "online" : "offline";
+  }
+  function applyStatus(s) {
+    setOnline(!!(s && s.ok));
+    $("tPending").textContent = s && s.pendingJobs != null ? s.pendingJobs : "—";
+    if (s && s.lastTick && s.lastTick.at) {
+      const d = new Date(s.lastTick.at);
+      $("tTick").textContent = isNaN(d) ? "—" : d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+    } else $("tTick").textContent = "idle";
+    $("tKv").textContent = s && s.kv ? "on" : "off";
+    state.activity = s && s.pendingJobs ? Math.min(s.pendingJobs, 6) : 0;
+  }
+  async function refreshStatus() { try { applyStatus(await api("/status")); } catch (e) {} }
+
+  // ---- registry ----
+  async function loadRegistry() {
+    try {
+      const r = await api("/registry");
+      $("tModel").textContent = (r.model || "glm").split(" ")[0];
+      $("capTools").innerHTML = (r.tools || []).map((t) => `<li><b>${esc(t.name)}</b> — <span>${esc(t.description || "")}</span></li>`).join("") || "<li><span>none</span></li>";
+      const auto = (r.automations || []).map((a) => `<li><b>${esc(a.name)}</b> <span>· ${esc(a.trigger || "")} — ${esc(a.what || "")}</span></li>`);
+      const apps = (r.apps || []).map((a) => `<li><b>${esc(a.name)}</b> <span>— ${esc(a.what || "")}</span></li>`);
+      $("capAuto").innerHTML = auto.concat(apps).join("") || "<li><span>none</span></li>";
+    } catch (e) {}
+  }
+
+  // ---- chat ----
+  function addMsg(who, text, tools) {
+    const log = $("chatLog");
+    if (log.querySelector(".empty")) log.innerHTML = "";
+    const el = document.createElement("div");
+    el.className = "msg " + (who === "you" ? "you" : "agent");
+    el.innerHTML = `<div class="who">${who === "you" ? "you" : "agent"}</div>${esc(text)}` + (tools && tools.length ? `<div class="tools">↳ used: ${tools.map(esc).join(", ")}</div>` : "");
+    log.appendChild(el); log.scrollTop = log.scrollHeight;
+    return el;
+  }
+  async function sendChat() {
+    const input = $("chatInput"); const text = input.value.trim();
+    if (!text) return;
+    input.value = ""; addMsg("you", text);
+    const pending = addMsg("agent", "…thinking"); state.activity = Math.max(state.activity, 2);
+    try {
+      const r = await api("/ask", { method: "POST", body: JSON.stringify({ input: text, thinking: $("thinkToggle").checked, sessionId: state.session }) });
+      pending.querySelector(".who").nextSibling;
+      pending.innerHTML = `<div class="who">agent</div>${esc(r.text || "(no answer)")}` + (r.toolRuns && r.toolRuns.length ? `<div class="tools">↳ used: ${r.toolRuns.map((t) => esc(t.name)).join(", ")}</div>` : "");
+    } catch (e) { pending.innerHTML = `<div class="who">agent</div><span style="color:var(--alert)">${esc(e.message)}</span>`; }
+    finally { state.activity = state.activity > 0 ? state.activity - 1 : 0; }
+  }
+  $("sendBtn").onclick = sendChat;
+  $("chatInput").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) sendChat(); });
+
+  // ---- jobs ----
+  async function dispatch(now) {
+    const ta = $("jobInput"); const goal = ta.value.trim(); if (!goal) return;
+    ta.value = ""; state.activity = Math.max(state.activity, 3);
+    try { await api("/jobs", { method: "POST", body: JSON.stringify({ goal, now: !!now }) }); await refreshJobs(); await refreshStatus(); }
+    catch (e) { alert("Couldn't dispatch: " + e.message); }
+  }
+  $("runBtn").onclick = () => dispatch(true);
+  $("queueBtn").onclick = () => dispatch(false);
+  $("refreshJobs").onclick = () => { refreshJobs(); refreshStatus(); };
+
+  async function refreshJobs() {
+    try {
+      const r = await api("/jobs"); const jobs = r.jobs || [];
+      const list = $("jobsList");
+      if (!jobs.length) { list.innerHTML = '<div class="empty">No jobs yet. Dispatch one above.</div>'; return; }
+      list.innerHTML = jobs.map((j) => `
+        <div class="job">
+          <div class="top"><span class="chip ${esc(j.status)}">${esc(j.status)}</span><span class="goal">${esc(j.goal || "")}</span><span class="id">${esc((j.id || "").slice(0, 10))}</span></div>
+          ${j.result ? `<div class="res">${esc(j.result)}</div>` : ""}
+          ${j.error ? `<div class="res" style="color:var(--alert)">${esc(j.error)}</div>` : ""}
+        </div>`).join("");
+    } catch (e) {}
+  }
+
+  // ---- heartbeat oscilloscope (signature) ----
+  function heartbeat() {
+    const c = $("pulse"); const ctx = c.getContext("2d");
+    const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let w, h, dpr;
+    function size() { dpr = Math.min(2, window.devicePixelRatio || 1); w = c.clientWidth; h = c.clientHeight; c.width = w * dpr; c.height = h * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0); }
+    size(); window.addEventListener("resize", size);
+    let t = 0;
+    // EKG-ish beat: mostly flat with a periodic spike whose rate rises with activity.
+    function beatY(x, mid, period) {
+      const p = ((x + period) % period) / period;
+      let y = 0;
+      if (p > 0.46 && p < 0.62) { const k = (p - 0.46) / 0.16; y = Math.sin(k * Math.PI) * (k < 0.5 ? 1 : -0.55); }
+      y += Math.sin((x * 0.012) + t * 0.6) * 0.06; // subtle baseline shimmer
+      return mid - y * (h * 0.32);
+    }
+    function frame() {
+      ctx.clearRect(0, 0, w, h);
+      const mid = h * 0.5;
+      const speed = reduce ? 0 : (1.4 + state.activity * 0.9);
+      const period = Math.max(120, 230 - state.activity * 18);
+      ctx.lineWidth = 2;
+      const grad = ctx.createLinearGradient(0, 0, w, 0);
+      grad.addColorStop(0, "rgba(56,224,200,0.0)");
+      grad.addColorStop(0.5, "rgba(255,180,84,0.9)");
+      grad.addColorStop(1, "rgba(56,224,200,0.0)");
+      ctx.strokeStyle = grad; ctx.shadowColor = "rgba(255,180,84,0.5)"; ctx.shadowBlur = 8;
+      ctx.beginPath();
+      for (let x = 0; x <= w; x += 2) { const y = beatY(x + t * speed, mid, period); x === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); }
+      ctx.stroke(); ctx.shadowBlur = 0;
+      if (!reduce) { t += 1; requestAnimationFrame(frame); }
+    }
+    if (reduce) { frame(); } else { requestAnimationFrame(frame); }
+  }
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, (m) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[m])); }
+
+  // ---- boot ----
+  let polling = null;
+  function boot() {
+    loadRegistry(); refreshStatus(); refreshJobs();
+    if (polling) clearInterval(polling);
+    polling = setInterval(() => { refreshStatus(); refreshJobs(); }, 15000);
+  }
+
+  heartbeat();
+  $("gUrl").value = state.url;
+  if (state.token) { hideGate(); boot(); } else { showGate(""); }
+})();
+</script>
+</body>
+</html>

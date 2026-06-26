@@ -1,0 +1,11 @@
+# Copy to `.dev.vars` for local `wrangler dev`, and set as real Worker secrets for prod:
+#   wrangler secret put ZAI_API_KEY
+#   wrangler secret put GATEWAY_TOKEN
+#
+# .dev.vars is gitignored. NEVER commit a real key.
+
+# z.ai (Zhipu) API key — server-side only. Lives at ~/.claude/secrets/zai.env locally.
+ZAI_API_KEY=your-zai-key-here
+
+# Bearer token clients must send to use the public Worker endpoints (prevents abuse of your free quota).
+GATEWAY_TOKEN=generate-a-long-random-string

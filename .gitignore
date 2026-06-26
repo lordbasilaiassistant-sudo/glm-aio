@@ -1,0 +1,11 @@
+node_modules/
+dist/
+.wrangler/
+# secrets — NEVER commit
+.dev.vars
+.env
+*.env
+!*.env.example
+glm-trace.jsonl
+*.log
+.DS_Store

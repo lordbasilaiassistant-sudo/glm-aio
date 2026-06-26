@@ -1,0 +1,14 @@
+# Render Blueprint — deploys the control center as a free static site.
+# In Render: New → Blueprint → connect this repo. Or New → Static Site with the
+# settings below (Publish directory: control-center, Build command: empty).
+services:
+  - type: web
+    name: glm-aio-control-center
+    runtime: static
+    staticPublishPath: ./control-center
+    buildCommand: "echo no build step"
+    pullRequestPreviewsEnabled: false
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
