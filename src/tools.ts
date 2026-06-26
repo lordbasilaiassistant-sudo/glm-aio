@@ -60,6 +60,14 @@ export class ToolRegistry {
         return JSON.stringify({ error: `invalid JSON arguments for ${name}: ${argsJson.slice(0, 120)}` });
       }
     }
+    // minimal schema check: required args present + args is an object
+    const params = def.parameters as { required?: string[] } | undefined;
+    if (params?.required?.length) {
+      if (typeof args !== "object" || args === null) return JSON.stringify({ error: `tool "${name}" expects an args object` });
+      for (const k of params.required) {
+        if ((args as Record<string, unknown>)[k] === undefined) return JSON.stringify({ error: `tool "${name}" missing required arg: ${k}` });
+      }
+    }
     try {
       const out = await def.handler(args, ctx);
       return typeof out === "string" ? out : JSON.stringify(out ?? null);
