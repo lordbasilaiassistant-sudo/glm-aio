@@ -127,9 +127,32 @@ export default {
   // Cron Triggers (configured in wrangler.toml) fire here — autonomous, off-PC.
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     if (event.cron === "0 12 * * *") ctx.waitUntil(runDailyReport(env));
+    else if (event.cron === "23 * * * *") ctx.waitUntil(runDirectorAdvance(env));
     else ctx.waitUntil(runCron(event, env));
   },
 };
+
+/** Hourly when the queue is idle: nudge the director to advance the mission one concrete
+ * step, so the company keeps working toward a verified-revenue product overnight. */
+async function runDirectorAdvance(env: Env): Promise<void> {
+  if (!env.GLM_KV) return;
+  const pending = await jobStore(env).pendingIds();
+  if (pending.length > 0) { console.log("[advance] queue busy, skip"); return; }
+  const director = new Assistant({
+    apiKey: env.ZAI_API_KEY,
+    logLevel: "silent",
+    name: "Director",
+    system: systemFor("director"),
+    tools: resolveTools(charterFor("director")?.tools, env),
+    store: new KVMemoryStore(env.GLM_KV, { prefix: "jobmem:", ttlSeconds: 60 * 60 * 24 * 14, maxMessages: 40 }),
+    sessionId: "director:mission",
+  });
+  await director.ask(
+    "Advance the core-product mission. read_doc('mission'), read_doc('plan'), and check the board. Decide the SINGLE next concrete step toward the first VERIFIED-revenue product and dispatch_task it (qa:true if it is a deliverable). If the last step stalled or a worker reported a blocker (e.g. missing shared data), fix the approach — make sure workers save outputs with write_doc and read each other's docs. One good step; keep momentum.",
+    { thinking: false },
+  );
+  console.log("[advance] director nudged at", nowIso());
+}
 
 /** Daily verification loop: the CFO compiles what the company did + believed profits (with
  * sources, unverified flagged) for the investors. Written to the workspace; the human verifies. */
