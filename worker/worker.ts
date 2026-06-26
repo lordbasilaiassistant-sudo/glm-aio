@@ -133,36 +133,37 @@ export default {
   // Cron Triggers (configured in wrangler.toml) fire here — autonomous, off-PC.
   async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext): Promise<void> {
     if (event.cron === "0 12 * * *") ctx.waitUntil(runDailyReport(env));
-    else if (event.cron === "23 * * * *") ctx.waitUntil(runDirectorAdvance(env));
-    else ctx.waitUntil(runCron(event, env));
+    else ctx.waitUntil(runCron(event, env)); // works the queue + refills via the leadership cycle when idle
   },
 };
 
-/** Hourly when the queue is idle: nudge the director to advance the mission one concrete
- * step, so the company keeps working toward a verified-revenue product overnight. */
-async function runDirectorAdvance(env: Env): Promise<void> {
+/** The leadership operating cycle: when the queue is empty, the COO reviews the company's
+ * goal + what was just done, then dispatches a fresh BATCH of distinct work across the team —
+ * so Foundry runs continuously like a real company instead of idling between nudges. */
+async function runCompanyCycle(env: Env): Promise<void> {
   if (!env.GLM_KV) return;
-  const hour = nowIso().slice(0, 13);
-  if (await env.GLM_KV.get("cron:advance:" + hour)) return; // idempotency: once per hour
-  await env.GLM_KV.put("cron:advance:" + hour, "done", { expirationTtl: 7200 });
-  const pending = await jobStore(env).pendingIds();
-  if (pending.length > 0) { console.log("[advance] queue busy, skip"); return; }
-  const director = new Assistant({
+  const ws = new Workspace(env.GLM_KV as unknown as KVLike, {});
+  const [mission, board] = await Promise.all([ws.readDoc("mission"), ws.board(8)]);
+  const recent = board.map((n) => `${n.by}: ${n.text}`).join(" | ").slice(0, 800);
+  const coo = new Assistant({
     apiKey: env.ZAI_API_KEY,
     logLevel: "silent",
-    name: "Director",
-    system: systemFor("director"),
-    tools: resolveTools(charterFor("director")?.tools, env),
-    store: new KVMemoryStore(env.GLM_KV, { prefix: "jobmem:", ttlSeconds: 60 * 60 * 24 * 14, maxMessages: 40 }),
-    sessionId: "director:mission",
+    name: "COO",
+    system: systemFor("coo"),
+    tools: resolveTools(["dispatch_task", "read_doc", "write_doc", "post_note", "org_index", "company_strategy"], env),
+    store: new KVMemoryStore(env.GLM_KV, { prefix: "coomem:", ttlSeconds: 60 * 60 * 24 * 7, maxMessages: 24 }),
+    sessionId: "coo:operating",
   });
-  await director.ask(
-    "Advance the core-product mission. read_doc('mission'), read_doc('plan'), and check the board. " +
-      "CHECK FOR 'INVESTOR REVIEW' notes on the board — these are capable external critiques from the investors and are GROUND TRUTH on quality. A product is NOT done until it clears investor review (rating >= 7) AND has verified revenue. If a product was rated low, dispatch a fix that targets the SPECIFIC critique, or kill it and pivot. " +
-      "Otherwise decide the SINGLE next concrete step toward the first VERIFIED-revenue product and dispatch_task it (qa:true if it is a deliverable). Make sure workers save outputs with write_doc and read each other's docs. One good step; keep momentum.",
+  await coo.ask(
+    "You are the COO running Foundry day-to-day. GOAL: ship PromptBase prompt PRODUCTS that get approved AND actually SELL — the path to profit. " +
+      `MISSION: ${mission ?? "(no mission doc — focus on shipping sellable PromptBase prompts)"}\n` +
+      `RECENT TEAM ACTIVITY (do NOT repeat any of this; advance PAST it): ${recent || "none yet"}\n\n` +
+      "Run this operating cycle now: call dispatch_task for the NEXT 2-3 CONCRETE, DISTINCT tasks that move us toward shipping/selling prompts. Each task must go to the right role, be different from the recent activity above, and be different from each other. " +
+      "Good moves: writer drafts a NEW prompt product in a proven business lane we haven't covered; qa reviews/scores a specific draft doc; growth names the single highest-demand lane with one reason; data checks what already sold. " +
+      "If a finished prompt is READY for release, call escalate(to='claude') for gatekeeper approval instead of sitting on it. Keep the whole team working — never leave the company idle.",
     { thinking: false },
   );
-  console.log("[advance] director nudged at", nowIso());
+  console.log("[cycle] COO ran operating cycle at", nowIso());
 }
 
 /** Daily verification loop: the CFO compiles what the company did + believed profits (with
@@ -279,6 +280,12 @@ async function runCron(event: ScheduledEvent, env: Env): Promise<void> {
     tick.processed = done.length;
     tick.results = done.map((j) => ({ id: j.id, status: j.status, error: j.error }));
     tick.pendingAfter = (await store.pendingIds()).length;
+    // Continuous operation: when the queue empties, the leadership team refills it with a
+    // fresh batch of real work (throttled to ~once / 8 min so it doesn't churn).
+    if (tick.pendingAfter === 0 && !(await env.GLM_KV.get("cron:cyclelock"))) {
+      await env.GLM_KV.put("cron:cyclelock", "1", { expirationTtl: 480 });
+      try { await runCompanyCycle(env); tick.refilled = true; } catch (e) { tick.cycleError = String(e); }
+    }
     await env.GLM_KV.put("status:last", JSON.stringify(tick));
   }
   console.log("[cron]", JSON.stringify(tick));
