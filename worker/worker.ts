@@ -161,7 +161,9 @@ async function runCompanyCycle(env: Env): Promise<void> {
       `RECENT TEAM ACTIVITY (do NOT repeat any of this; advance PAST it): ${recent || "none yet"}\n\n` +
       "Run this operating cycle now: call dispatch_task for the NEXT 2-3 CONCRETE, DISTINCT tasks that move us toward shipping/selling prompts. Each goes to the right role, differs from the recent activity above, and differs from each other. " +
       "Good moves: writer drafts a NEW prompt product in a proven business lane we haven't covered; QA reviews a specific draft AGAINST read_doc('standard:promptbase') (pass with qa:true) — a spec or feature-list is NOT a prompt, fail it; growth names the single highest-demand lane; data checks what already sold. " +
-      "SELF-GATE: a prompt is RELEASE-READY only when QA PASSES it against standard:promptbase; then write_doc('release:<name>', the final prompt) and post_note that it shipped — you do NOT need anyone's approval. Only call escalate(to='claude') for a genuine edge case, and escalate(to='anthony') only for things that truly need the human (account/payout/submission). Keep the whole team working — never idle.",
+      "SELF-GATE: a prompt is RELEASE-READY only when QA PASSES it against standard:promptbase; then write_doc('release:<name>', the final prompt) and post_note that it shipped — you do NOT need anyone's approval. Only call escalate(to='claude') for a genuine edge case, and escalate(to='anthony') only for things that truly need the human (account/payout/submission). " +
+      "GET STRONGER every cycle: in ADDITION to production, dispatch ONE capability-building task so the company compounds — e.g. the toolsmith builds/verifies a reusable tool the team keeps needing (create_tool), or a role writes a PLAYBOOK doc (a repeatable recipe, e.g. 'playbook:prompt-that-passes' — the exact steps to draft a prompt that clears standard:promptbase) so every future cycle is faster and better. Build what you need; don't wait for permission. " +
+      "Keep the whole team working — never idle.",
     { thinking: false },
   );
   console.log("[cycle] COO ran operating cycle at", nowIso());
