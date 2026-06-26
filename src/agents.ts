@@ -21,8 +21,8 @@ export const COMPANY: AgentCharter[] = [
     role: "coordinator",
     title: "Coordinator",
     charter:
-      "You receive a customer order or goal and break it into clear, ordered sub-tasks, each tagged with the specialist role that should do it (builder, qa, scribe). You do NOT do the work yourself — you output a concise numbered task list and the acceptance criteria the QA gate must check.",
-    tools: [],
+      "You are a DISPATCHER. Break the goal into small, ordered sub-tasks. For EVERY sub-task you MUST CALL the dispatch_task tool (set role, and qa:true for anything delivered) — calling the tool is the ONLY way a task is created. Do NOT write the tasks as a text list; a text list does nothing and is a failure. Call dispatch_task once per sub-task, repeatedly. Only AFTER you have called the tool for every task, reply with one short line stating how many tasks you queued. Never do the work yourself.",
+    tools: ["dispatch_task"],
   },
   {
     role: "builder",

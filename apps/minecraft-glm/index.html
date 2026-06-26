@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Three.js Voxel Terrain</title>
+    <style>
+        body { margin: 0; overflow: hidden; }
+        canvas { display: block; }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-family: Arial, sans-serif;
+            background: rgba(0,0,0,0.5);
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">Click to start - WASD to move, mouse to look</div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script>
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB); // Sky blue
+        
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(12, 10, 12);
+        
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+        
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+        
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(50, 50, 50);
+        directionalLight.castShadow = true;
+        scene.add(directionalLight);
+        
+        // Materials
+        const grassMaterial = new THREE.MeshLambertMaterial({ color: 0x4CAF50 });
+        const dirtMaterial = new THREE.MeshLambertMaterial({ color: 0x8B4513 });
+        
+        // Terrain generation
+        const size = 24;
+        const terrain = new THREE.Group();
+        
+        // Generate procedural heights using simple noise
+        function generateHeight(x, z) {
+            const scale = 0.1;
+            const height = Math.sin(x * scale) * Math.cos(z * scale) * 3 + 
+                          Math.sin(x * scale * 2) * Math.cos(z * scale * 2) * 1.5 + 4;
+            return Math.floor(height);
+        }
+        
+        // Create voxel terrain
+        for (let x = 0; x < size; x++) {
+            for (let z = 0; z < size; z++) {
+                const height = generateHeight(x, z);
+                
+                for (let y = 0; y < height; y++) {
+                    const geometry = new THREE.BoxGeometry(1, 1, 1);
+                    const material = y === height - 1 ? grassMaterial : dirtMaterial;
+                    const cube = new THREE.Mesh(geometry, material);
+                    
+                    cube.position.set(x - size/2, y, z - size/2);
+                    cube.castShadow = true;
+                    cube.receiveShadow = true;
+                    
+                    terrain.add(cube);
+                }
+            }
+        }
+        
+        scene.add(terrain);
+        
+        // Controls
+        let isPointerLocked = false;
+        const moveForward = new THREE.Vector3();
+        const moveBackward = new THREE.Vector3();
+        const moveLeft = new THREE.Vector3();
+        const moveRight = new THREE.Vector3();
+        
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+        
+        const onKeyDown = function (event) {
+            switch (event.code) {
+                case 'ArrowUp':
+                case 'KeyW':
+                    moveForward.setFromMatrixColumn(camera.matrix, 0);
+                    moveForward.multiplyScalar(-1);
+                    velocity.add(moveForward);
+                    break;
+                case 'ArrowDown':
+                case 'KeyS':
+                    moveBackward.setFromMatrixColumn(camera.matrix, 0);
+                    velocity.add(moveBackward);
+                    break;
+                case 'ArrowLeft':
+                case 'KeyA':
+                    moveLeft.setFromMatrixColumn(camera.matrix, 2);
+                    velocity.add(moveLeft);
+                    break;
+                case 'ArrowRight':
+                case 'KeyD':
+                    moveRight.setFromMatrixColumn(camera.matrix, 2);
+                    moveRight.multiplyScalar(-1);
+                    velocity.add(moveRight);
+                    break;
+            }
+        };
+        
+        const onKeyUp = function (event) {
+            switch (event.code) {
+                case 'ArrowUp':
+                case 'KeyW':
+                    moveForward.setFromMatrixColumn(camera.matrix, 0);
+                    moveForward.multiplyScalar(-1);
+                    velocity.sub(moveForward);
+                    break;
+                case 'ArrowDown':
+                case 'KeyS':
+                    moveBackward.setFromMatrixColumn(camera.matrix, 0);
+                    velocity.sub(moveBackward);
+                    break;
+                case 'ArrowLeft':
+                case 'KeyA':
+                    moveLeft.setFromMatrixColumn(camera.matrix, 2);
+                    velocity.sub(moveLeft);
+                    break;
+                case 'ArrowRight':
+                case 'KeyD':
+                    moveRight.setFromMatrixColumn(camera.matrix, 2);
+                    moveRight.multiplyScalar(-1);
+                    velocity.sub(moveRight);
+                    break;
+            }
+        };
+        
+        document.addEventListener('keydown', onKeyDown);
+        document.addEventListener('keyup', onKeyUp);
+        
+        // Pointer lock
+        document.addEventListener('click', function () {
+            renderer.domElement.requestPointerLock();
+        });
+        
+        document.addEventListener('pointerlockchange', function () {
+            isPointerLocked = document.pointerLockElement === renderer.domElement;
+            if (isPointerLocked) {
+                document.getElementById('info').style.display = 'none';
+            }
+        });
+        
+        // Mouse movement
+        document.addEventListener('mousemove', function (event) {
+            if (!isPointerLocked) return;
+            
+            const movementX = event.movementX || 0;
+            const movementY = event.movementY || 0;
+            
+            camera.rotation.y -= movementX * 0.002;
+            camera.rotation.x -= movementY * 0.002;
+            camera.rotation.x = Math.max(-Math.PI/2, Math.min(Math.PI/2, camera.rotation.x));
+        });
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            // Apply movement
+            const speed = 0.1;
+            velocity.multiplyScalar(speed);
+            camera.position.add(velocity);
+            velocity.multiplyScalar(0.9); // Friction
+            
+            // Keep camera above terrain
+            const terrainHeight = generateHeight(
+                Math.floor(camera.position.x + size/2),
+                Math.floor(camera.position.z + size/2)
+            );
+            camera.position.y = Math.max(camera.position.y, terrainHeight + 1);
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Handle window resize
+        window.addEventListener('resize', function () {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        animate();
+    </script>
+</body>
+</html>

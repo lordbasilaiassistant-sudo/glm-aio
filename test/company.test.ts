@@ -41,6 +41,12 @@ test("agents: QA charter exists and systemFor builds a prompt", () => {
   assert.equal(systemFor("nope"), undefined);
 });
 
+test("agents: coordinator can self-delegate via dispatch_task", () => {
+  const coord = charterFor("coordinator")!;
+  assert.ok(coord.tools.includes("dispatch_task"), "coordinator must hold the delegation tool");
+  assert.match(systemFor("coordinator")!, /dispatch_task/);
+});
+
 test("JobStore carries role + qa from the runner onto the job", async () => {
   const store = new JobStore(new FakeKV());
   const job = await store.enqueue("build a thing", "api", { role: "builder", qa: true });

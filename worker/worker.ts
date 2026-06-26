@@ -17,7 +17,7 @@ import { nowIso } from "../src/util";
 import type { Message } from "../src/types";
 import type { KVLike } from "../src/memory";
 import { builtinTools } from "./tools";
-import type { ToolDef } from "../src/tools";
+import { tool, type ToolDef } from "../src/tools";
 import { AFFILIATES } from "./affiliates";
 
 export interface Env {
@@ -67,7 +67,10 @@ export default {
     if (req.method === "GET" && url.pathname === "/registry") {
       return json({
         model: "glm-4.5-flash (free)",
-        tools: builtinTools().map((t) => ({ name: t.name, description: t.description })),
+        tools: [
+          ...builtinTools().map((t) => ({ name: t.name, description: t.description })),
+          { name: "dispatch_task", description: "(coordinator) queue a sub-task for the company to work autonomously" },
+        ],
         endpoints: ["POST /chat", "POST /ask", "POST /jobs", "GET /jobs", "GET /jobs/:id", "GET /status"],
         automations: REGISTRY.automations,
         apps: REGISTRY.apps,
@@ -201,7 +204,7 @@ async function runJob(job: Job, env: Env) {
     logLevel: "silent",
     name: charter?.title ?? "Builder",
     ...(charter ? { system: systemFor(role!) } : {}),
-    tools: toolsForCharter(charter?.tools),
+    tools: toolsForCharter(charter?.tools, env),
     ...(env.GLM_KV ? { store: new KVMemoryStore(env.GLM_KV, { prefix: "jobmem:", ttlSeconds: 60 * 60 * 24 * 30, maxMessages: 60 }), sessionId: job.id } : {}),
   });
   const r = await builder.ask(job.goal, { thinking: Boolean(job.meta?.thinking) });
@@ -234,12 +237,50 @@ async function runJob(job: Job, env: Env) {
   };
 }
 
-/** Resolve a charter's tool-name list to actual tool defs. ["*"] or undefined = all. */
-function toolsForCharter(names: string[] | undefined): ToolDef[] {
-  const all = builtinTools();
-  if (!names || names.includes("*")) return all;
-  if (names.length === 0) return [];
-  return all.filter((t) => names.includes(t.name));
+/**
+ * Resolve a charter's tool-name list to actual tool defs. ["*"] or undefined = all
+ * built-ins (NOT dispatch_task — that's coordinator-only and must be named explicitly,
+ * so builders/qa can't spawn runaway sub-jobs).
+ */
+function toolsForCharter(names: string[] | undefined, env: Env): ToolDef[] {
+  const base = builtinTools();
+  if (!names || names.includes("*")) return base;
+  const dispatch = env.GLM_KV ? dispatchTaskTool(jobStore(env)) : null;
+  const out: ToolDef[] = [];
+  for (const n of names) {
+    if (n === "dispatch_task") {
+      if (dispatch) out.push(dispatch);
+    } else {
+      const t = base.find((b) => b.name === n);
+      if (t) out.push(t);
+    }
+  }
+  return out;
+}
+
+/** Tool that lets the coordinator queue sub-tasks for the company — the autonomous-delegation primitive. */
+function dispatchTaskTool(store: JobStore): ToolDef {
+  return tool({
+    name: "dispatch_task",
+    description:
+      "Queue a sub-task for the agent company to work autonomously on the next cycle. Use this to delegate a scoped task to a specialist role. Returns the new job id.",
+    parameters: {
+      type: "object",
+      properties: {
+        goal: { type: "string", description: "the scoped task to delegate" },
+        role: { type: "string", enum: ["builder", "qa", "scribe"], description: "which specialist works it" },
+        qa: { type: "boolean", description: "run the QA gate on the result before it is marked done" },
+      },
+      required: ["goal"],
+    },
+    handler: async (a: { goal: string; role?: string; qa?: boolean }) => {
+      const meta: Record<string, unknown> = {};
+      if (a.role) meta.role = a.role;
+      if (a.qa) meta.qa = true;
+      const job = await store.enqueue(a.goal, "coordinator", meta);
+      return { queued: job.id, role: a.role ?? "any" };
+    },
+  });
 }
 
 async function handleBusPost(req: Request, env: Env): Promise<Response> {
