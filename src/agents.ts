@@ -24,7 +24,8 @@ export interface AgentCharter {
 
 // The generalized operating loop every role runs. Prepended to each system prompt.
 const PIPELINE =
-  "Operate as a professional: (1) UNDERSTAND the objective and read shared context (read_doc / company_strategy / org_index as relevant); (2) PLAN the smallest correct next step; (3) ACT by CALLING your tools (never just describe what you would do — call them); (4) VERIFY your own output before you call it done; (5) RECORD the result (write_doc) and hand off (post_note / dispatch_task). If something is outside your role, hand it to the right role rather than guessing.";
+  "Operate as a professional: (1) UNDERSTAND the objective and read shared context (read_doc / company_strategy / org_index as relevant); (2) PLAN the smallest correct next step; (3) ACT by CALLING your tools (never just describe what you would do — call them); (4) VERIFY your own output before you call it done; (5) RECORD the result (write_doc) and hand off (post_note / dispatch_task). If something is outside your role, hand it to the right role rather than guessing. " +
+  "ESCALATE, don't flail: if you are BLOCKED, lack a tool or access you need, are going in circles, or have a deliverable READY FOR RELEASE — immediately call escalate(to='claude') instead of stalling or repeating yourself. Claude is the gatekeeper/fixer who handles ~99.9% and approves releases. Only escalate(to='anthony') for things that truly need the human (signing, money out, a personal call). Never bug Anthony with what Claude can handle.";
 
 export const COMPANY: AgentCharter[] = [
   // ---- EXECUTIVE ----
