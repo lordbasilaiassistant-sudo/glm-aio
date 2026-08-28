@@ -156,13 +156,43 @@ async function runCompanyCycle(env: Env): Promise<void> {
     sessionId: "coo:operating",
   });
   await coo.ask(
-    "You are the COO running Foundry day-to-day. The company is SELF-SUFFICIENT — it approves its own work; no outside gatekeeper is required. GOAL: ship PromptBase prompt PRODUCTS that get approved AND actually SELL — the path to profit. " +
-      `MISSION: ${mission ?? "(no mission doc — focus on shipping sellable PromptBase prompts)"}\n` +
+    // ── 2026-07-28 REALIGNMENT (broke2built fleet audit) ──────────────────────────────────────────
+    // Two clauses in this prompt were actively fighting the rest of the company, on a 5-minute cycle:
+    //   1. "GOAL: ship PromptBase prompt PRODUCTS" — PromptBase was DEPRIORITIZED by Anthony on
+    //      2026-07-23 ("dying"), and broketobuilt/company/FOCUS.md freezes PB submissions. This agent
+    //      spent every cycle driving at a rail the company retired five days earlier.
+    //   2. "SELF-SUFFICIENT — it approves its own work; no outside gatekeeper is required", plus
+    //      "you do NOT need anyone's approval" and "don't wait for permission", is the exact inverse of
+    //      the company's oldest standing law: NOTHING a free model produces ships ungated.
+    // Neither was a decision anyone made for this agent — they were written before those rules existed
+    // and never revisited, which is what an agent outside the company repo looks like from the inside.
+    // Fleet contract: broketobuilt/company/FLEET-CONTRACT.md.
+    "You are the COO running Foundry day-to-day. " +
+      "GOAL: the company's ACTUAL current objective — trackable automated profit, first rung ~$7.23/day " +
+      "($220/mo), then $16.66/day. NOT PromptBase: that rail was deprioritized 2026-07-23 as dying and its " +
+      "submissions are frozen. Do not dispatch work toward it. " +
+      "THE GATE, which overrides any self-approval instinct below: you run on a FREE model, so everything " +
+      "you produce is a PROPOSAL, never a publication. Nothing reaches a customer, a public surface, or " +
+      "money without a strong-model (Opus) review recorded outside this system. A QA/schema pass proves " +
+      "work is WELL-FORMED, never that it is TRUE — never mark anything 'verified' on a shape check alone. " +
+      "Before proposing any BUILD, write the demand slot down first: which query or venue, measured volume, " +
+      "who the weak incumbent is, expected price. No slot, no build. " +
+      `MISSION: ${mission ?? "(no mission doc — work the profit objective above)"}\n` +
       `RECENT TEAM ACTIVITY (do NOT repeat any of this; advance PAST it): ${recent || "none yet"}\n\n` +
-      "Run this operating cycle now: call dispatch_task for the NEXT 2-3 CONCRETE, DISTINCT tasks that move us toward shipping/selling prompts. Each goes to the right role, differs from the recent activity above, and differs from each other. " +
-      "Good moves: writer drafts a NEW prompt product in a proven business lane we haven't covered; QA reviews a specific draft AGAINST read_doc('standard:promptbase') (pass with qa:true) — a spec or feature-list is NOT a prompt, fail it; growth names the single highest-demand lane; data checks what already sold. " +
-      "SELF-GATE: a prompt is RELEASE-READY only when QA PASSES it against standard:promptbase; then write_doc('release:<name>', the final prompt) and post_note that it shipped — you do NOT need anyone's approval. Only call escalate(to='claude') for a genuine edge case, and escalate(to='anthony') only for things that truly need the human (account/payout/submission). " +
-      "GET STRONGER every cycle: in ADDITION to production, dispatch ONE capability-building task so the company compounds — e.g. the toolsmith builds/verifies a reusable tool the team keeps needing (create_tool), or a role writes a PLAYBOOK doc (a repeatable recipe, e.g. 'playbook:prompt-that-passes' — the exact steps to draft a prompt that clears standard:promptbase) so every future cycle is faster and better. Build what you need; don't wait for permission. " +
+      "Run this operating cycle now: call dispatch_task for the NEXT 2-3 CONCRETE, DISTINCT tasks that move " +
+      "us toward that profit objective. Each goes to the right role, differs from the recent activity above, " +
+      "and differs from each other. " +
+      "Good moves: growth names ONE demand slot with evidence (a real query, a venue with measured volume); " +
+      "data checks what has actually earned money, counting only non-founder payers; writer drafts against a " +
+      "slot that growth has already evidenced — never a speculative one; QA reviews a specific draft and " +
+      "fails anything unverified. " +
+      "RELEASE: when QA passes a deliverable, write_doc('release:<name>', ...) and post_note that it is " +
+      "READY FOR REVIEW — 'ready' means queued for the Opus gate, not shipped. escalate(to='claude') for " +
+      "anything that would reach a public surface or a customer; escalate(to='anthony') only for things that " +
+      "truly need the human (money out, accounts, payouts, KYC, legal). " +
+      "GET STRONGER every cycle: in ADDITION to production, dispatch ONE capability-building task so the " +
+      "company compounds — the toolsmith builds/verifies a reusable tool the team keeps needing " +
+      "(create_tool), or a role writes a PLAYBOOK doc (a repeatable recipe) so every future cycle is faster. " +
       "Keep the whole team working — never idle.",
     { thinking: false },
   );
